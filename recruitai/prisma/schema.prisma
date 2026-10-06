@@ -1,0 +1,332 @@
+// Prisma schema for RecruitAI
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Postgres. On Vercel, DATABASE_URL is the pooled connection the app uses;
+// DATABASE_URL_UNPOOLED is the direct one migrations need. Locally, both can
+// be the same URL. (The earlier SQLite history is archived in
+// prisma/migrations-sqlite-archive.)
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+enum Role {
+  admin
+  recruiter
+}
+
+enum Stage {
+  pre_product
+  early_users
+  scaling
+}
+
+enum Verdict {
+  COMPATIBLE
+  BORDERLINE
+  NOT_COMPATIBLE
+}
+
+enum JobStatus {
+  OPEN
+  CLOSED
+}
+
+enum Seniority {
+  ENTRY
+  MID
+  SENIOR
+  LEAD
+  EXECUTIVE
+}
+
+enum CandidateSource {
+  APPLIED
+  RECRUITER_UPLOADED
+}
+
+enum ApplicationStatus {
+  RECEIVED
+  IN_REVIEW
+  NOT_MOVING_FORWARD
+  INTERVIEWING
+  OFFER
+  HIRED
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum CompanySize {
+  SIZE_1_10
+  SIZE_11_50
+  SIZE_51_200
+  SIZE_201_1000
+  SIZE_1000_PLUS
+}
+
+enum NotificationType {
+  NEW_APPLICANT
+  STATUS_CHANGED
+  NEW_MESSAGE
+  JOB_ALERT
+}
+
+enum MessageSender {
+  RECRUITER
+  APPLICANT
+}
+
+enum RemotePreference {
+  REMOTE_ONLY
+  HYBRID
+  ON_SITE
+  FLEXIBLE
+}
+
+enum NoticePeriod {
+  IMMEDIATE
+  TWO_WEEKS
+  ONE_MONTH
+  MORE_THAN_ONE_MONTH
+}
+
+enum WorkAuthorization {
+  AUTHORIZED
+  REQUIRES_SPONSORSHIP
+  PREFER_NOT_TO_SAY
+}
+
+model Company {
+  id        String       @id @default(cuid())
+  name      String
+  industry  String?
+  website   String?
+  size      CompanySize?
+  about     String?
+  createdAt DateTime     @default(now())
+
+  users         User[]
+  jobs          Job[]
+  notifications Notification[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(recruiter)
+  companyId    String
+  createdAt    DateTime @default(now())
+
+  company       Company                 @relation(fields: [companyId], references: [id])
+  jobsCreated   Job[]                   @relation("JobCreatedBy")
+  statusChanges CandidateStatusChange[]
+  messagesSent  Message[]
+}
+
+model Job {
+  id                 String    @id @default(cuid())
+  title              String
+  description        String
+  location           String    @default("Remote")
+  status             JobStatus @default(OPEN)
+  seniority          Seniority @default(MID)
+  stage              Stage     @default(pre_product)
+  keySkills          String    @map("stackContext")
+  stageContext       String
+  whatTheyOwnFirst   String
+  // Salary range is required for every new posting (enforced in createJob).
+  // Nullable only so postings created before the requirement still load.
+  salaryMin          Int?
+  salaryMax          Int?
+  salaryCurrency     String    @default("USD")
+  // Ghost-job prevention: recruiters re-confirm open roles; 30+ days without
+  // a confirmation auto-closes the posting (autoClosedAt records when).
+  lastVerifiedActive DateTime  @default(now())
+  autoClosedAt       DateTime?
+  companyId          String
+  createdBy          String
+  createdAt          DateTime  @default(now())
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  creator    User        @relation("JobCreatedBy", fields: [createdBy], references: [id])
+  candidates Candidate[]
+  savedBy    SavedJob[]
+}
+
+model Candidate {
+  id                  String            @id @default(cuid())
+  jobId               String
+  name                String
+  email               String?
+  phone               String?
+  coverNote           String?
+  qualifications      String?
+  cvFileUrl           String
+  extractedText       String
+  source              CandidateSource   @default(RECRUITER_UPLOADED)
+  applicantId         String?
+  status              ApplicationStatus @default(RECEIVED) @map("applicantStatus")
+  statusUpdatedAt     DateTime          @default(now())
+  // Unguessable secret for the public /applications/[token] status page, so
+  // applicants without an account can track status without exposing ids.
+  statusToken         String            @unique
+  // "Possible duplicate application": an earlier candidate at the same
+  // company whose CV text is near-identical. Informational only.
+  duplicateOfId       String?
+  duplicateSimilarity Float?
+  uploadedAt          DateTime          @default(now())
+
+  job           Job                     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  applicant     Applicant?              @relation(fields: [applicantId], references: [id], onDelete: SetNull)
+  evaluation    Evaluation?
+  messages      Message[]
+  statusChanges CandidateStatusChange[]
+}
+
+// Timestamped audit trail of every status change on a candidate.
+model CandidateStatusChange {
+  id            String             @id @default(cuid())
+  candidateId   String
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus
+  changedById   String?
+  changedByName String
+  changedAt     DateTime           @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  changedBy User?     @relation(fields: [changedById], references: [id], onDelete: SetNull)
+}
+
+// Outbox for applicant-facing email. No email provider is wired up yet, so
+// messages are queued here (and logged in dev); a sender can drain QUEUED rows.
+model OutboundEmail {
+  id          String      @id @default(cuid())
+  to          String
+  subject     String
+  body        String
+  kind        String
+  candidateId String?
+  status      EmailStatus @default(QUEUED)
+  createdAt   DateTime    @default(now())
+  sentAt      DateTime?
+}
+
+model Applicant {
+  id                String             @id @default(cuid())
+  name              String
+  email             String             @unique
+  passwordHash      String
+  phone             String?
+  headline          String?
+  skills            String?
+  linkedinUrl       String?
+  portfolioUrl      String?
+  seniority         Seniority?
+  location          String?
+  desiredTitle      String?
+  yearsOfExperience Int?
+  workAuthorization WorkAuthorization?
+  remotePreference  RemotePreference?
+  noticePeriod      NoticePeriod?
+  salaryExpectation String?
+  savedCvFileUrl    String?
+  savedCvText       String?
+  savedCoverNote    String?
+  createdAt         DateTime           @default(now())
+
+  applications  Candidate[]
+  notifications Notification[]
+  savedSearches SavedSearch[]
+  savedJobs     SavedJob[]
+}
+
+model SavedJob {
+  id          String   @id @default(cuid())
+  applicantId String
+  jobId       String
+  createdAt   DateTime @default(now())
+
+  applicant Applicant @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  job       Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([applicantId, jobId])
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  companyId   String?
+  applicantId String?
+  type        NotificationType
+  title       String
+  body        String
+  link        String
+  read        Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+
+  company   Company?   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  applicant Applicant? @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+}
+
+model Message {
+  id           String        @id @default(cuid())
+  candidateId  String
+  sender       MessageSender
+  senderName   String
+  // Recruiter who sent it (null for applicant replies).
+  senderUserId String?
+  body         String
+  createdAt    DateTime      @default(now())
+
+  candidate  Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  senderUser User?     @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
+}
+
+model SavedSearch {
+  id          String     @id @default(cuid())
+  applicantId String
+  label       String
+  query       String?
+  location    String?
+  seniority   Seniority?
+  skill       String?
+  createdAt   DateTime   @default(now())
+
+  applicant Applicant @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+}
+
+model Evaluation {
+  id                    String   @id @default(cuid())
+  candidateId           String   @unique
+  totalScore            Int
+  verdict               Verdict
+  skillsMatchScore      Int      @map("stackOverlapScore")
+  buildingScore         Int
+  startupToleranceScore Int
+  trackRecordScore      Int      @map("rangeScore")
+  redFlagScore          Int
+  summary               String   @default("")
+  strengths             String
+  concerns              String
+  potential             String   @default("[]")
+  notes                 String   @default("")
+  manualVerdictOverride Verdict?
+  // "Possibly generic application" hint — never affects score or verdict.
+  genericFlag           Boolean  @default(false)
+  genericReasons        String   @default("[]")
+  // Recruiter-edited interview questions (JSON string[]); null until generated.
+  interviewQuestions    String?
+  evaluatedAt           DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+}

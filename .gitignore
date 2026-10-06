@@ -1,0 +1,23 @@
+# Root safety net — the app's own rules live in recruitai/.gitignore
+node_modules/
+.next/
+out/
+build/
+coverage/
+.vercel/
+
+# Secrets / local data
+.env*
+!.env.example
+*.pem
+*.db
+*.db-journal
+*.sqlite
+uploads/
+
+# Build caches / OS junk
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+desktop.ini
+npm-debug.log*
