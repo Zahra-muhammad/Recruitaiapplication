@@ -5,6 +5,8 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { applyStatusChange } from "@/lib/candidateStatus";
 import { generateInterviewQuestions, type InterviewQuestion } from "@/lib/interviewQuestions";
+import { readScoringDetails } from "@/lib/scoring";
+import { runScoring } from "@/lib/scoringRun";
 import type { Verdict } from "@prisma/client";
 
 const VALID_VERDICTS: Verdict[] = ["COMPATIBLE", "BORDERLINE", "NOT_COMPATIBLE"];
@@ -14,7 +16,7 @@ async function findCompanyCandidate(candidateId: string) {
   if (!session?.user) throw new Error("Not authenticated");
   const candidate = await prisma.candidate.findFirst({
     where: { id: candidateId, job: { companyId: session.user.companyId } },
-    include: { job: true },
+    include: { job: true, evaluation: true },
   });
   if (!candidate) throw new Error("Candidate not found");
   return candidate;
@@ -30,7 +32,9 @@ export async function generateCandidateInterviewQuestions(
   candidateId: string
 ): Promise<InterviewQuestion[]> {
   const candidate = await findCompanyCandidate(candidateId);
-  const questions = generateInterviewQuestions(candidate.extractedText, candidate.job);
+  const details = candidate.evaluation ? readScoringDetails(candidate.evaluation) : null;
+  if (!candidate.evaluation || !details) throw new Error("Score this candidate with the current scorer first.");
+  const questions = generateInterviewQuestions(details, candidate.job, candidate.evaluation);
 
   await prisma.evaluation.update({
     where: { candidateId },
@@ -112,4 +116,13 @@ export async function setCandidateStatus(
   revalidatePath(`/dashboard/${jobId}/candidates/${candidateId}`);
   revalidatePath(`/dashboard/${jobId}`);
   revalidatePath(`/applications/${statusToken}`);
+}
+
+// Scores (or re-scores) one candidate now and waits for the result, so the
+// page shows the new score — or the new failure reason — on reload.
+export async function retryScoring(jobId: string, candidateId: string) {
+  await findCompanyCandidate(candidateId);
+  await runScoring(candidateId);
+  revalidatePath(`/dashboard/${jobId}/candidates/${candidateId}`);
+  revalidatePath(`/dashboard/${jobId}`);
 }

@@ -72,9 +72,9 @@ export default function ApplyGate({
     onDrop,
     onDropRejected: (rejections) => {
       const tooBig = rejections.some((r) => r.errors.some((e) => e.code === "file-too-large"));
-      setCheckError(tooBig ? "That PDF is over 4MB — please upload a smaller version." : "Please upload a single PDF file.");
+      setCheckError(tooBig ? "That file is over 4MB — please upload a smaller version." : "Please upload a single PDF or Word (.docx) file.");
     },
-    accept: { "application/pdf": [".pdf"] },
+    accept: { "application/pdf": [".pdf"], "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"] },
     maxSize: MAX_CV_BYTES,
     multiple: false,
     disabled: checking || applying,
@@ -93,7 +93,7 @@ export default function ApplyGate({
   function handleCheck() {
     setCheckError(null);
     if (!file && !useSavedCv) {
-      setCheckError("Please attach your CV as a PDF first.");
+      setCheckError("Please attach your CV (PDF or Word) first.");
       return;
     }
 
@@ -199,9 +199,9 @@ export default function ApplyGate({
               ? `Selected: ${file.name}`
               : isDragActive
               ? "Drop your CV here"
-              : "Drag & drop your CV (PDF), or click to select"}
+              : "Drag & drop your CV (PDF or Word), or click to select"}
           </p>
-          <p className="text-xs text-zinc-400 mt-1">PDF only, one file.</p>
+          <p className="text-xs text-zinc-400 mt-1">PDF or Word (.docx), one file.</p>
         </div>
       )}
 

@@ -46,7 +46,7 @@ export default function CvUploadDropzone({ jobId }: { jobId: string }) {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { "application/pdf": [".pdf"] },
+    accept: { "application/pdf": [".pdf"], "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"] },
     multiple: true,
     disabled: uploading,
   });
@@ -66,8 +66,8 @@ export default function CvUploadDropzone({ jobId }: { jobId: string }) {
           {uploading
             ? "Uploading and scoring…"
             : isDragActive
-            ? "Drop PDFs here"
-            : "Drag & drop CVs (PDF), or click to browse"}
+            ? "Drop CVs here"
+            : "Drag & drop CVs (PDF or Word), or click to browse"}
         </p>
         <p className="text-xs text-zinc-400 mt-1">
           Multiple files supported — each will be parsed, scored, and ranked automatically.

@@ -40,6 +40,7 @@ In the project: **Storage** tab.
 | Name | Value |
 | --- | --- |
 | `AUTH_SECRET` | A new random secret — run `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` and paste the output. Don't reuse the one in your local `.env`. |
+| `ANTHROPIC_API_KEY` | From <https://console.anthropic.com> → **API keys**. Powers CV scoring; without it every CV shows "Scoring failed – retry". |
 | `APP_URL` | Your site address, e.g. `https://recruitai.com` (use the `*.vercel.app` address until you have a domain). Used for links in emails. |
 
 ## 5. Deploy
@@ -47,6 +48,16 @@ In the project: **Storage** tab.
 **Deployments → Redeploy** (or push to GitHub). The build creates the
 database tables on the first production deploy. Then open the site, go to
 `/signup`, and create the first company account.
+
+## 5b. Upgrade existing scores
+
+Candidates scored before the AI scorer keep their old keyword score and show a
+"Rescore" link on their page. To rescore them all at once, run locally with the
+production `DATABASE_URL` and `ANTHROPIC_API_KEY` in `.env`:
+
+```
+npm run rescore
+```
 
 ## 6. Get a domain
 

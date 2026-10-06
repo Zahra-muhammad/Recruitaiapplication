@@ -17,6 +17,11 @@ import { searchPipeline } from "./actions";
 import FunnelAuditPanel from "@/components/FunnelAuditPanel";
 import { auditFunnel } from "@/lib/funnelAudit";
 import { describeDuplicates } from "@/lib/duplicateLabel";
+import { isScoringStale } from "@/lib/scoringRun";
+import { retryScoring } from "./candidates/[candidateId]/actions";
+
+// "Retry scoring" waits for the AI, which can take a minute.
+export const maxDuration = 300;
 
 export default async function JobDetailPage({
   params,
@@ -46,24 +51,37 @@ export default async function JobDetailPage({
   const duplicates = await describeDuplicates(session.user.companyId, candidates);
   const funnel = auditFunnel(candidates.map((c) => ({ status: c.status, history: c.statusChanges })));
 
+  // Every candidate is listed — ones still being scored or whose scoring
+  // failed show that instead of a score, below the ranked ones.
   const rows: CandidateRow[] = candidates
-    .filter((c) => c.evaluation)
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      email: c.email,
-      uploadedAt: c.uploadedAt.toLocaleDateString(),
-      totalScore: c.evaluation!.totalScore,
-      verdict: c.evaluation!.verdict,
-      manualVerdictOverride: c.evaluation!.manualVerdictOverride,
-      source: c.source,
-      status: c.status,
-      genericReasons: c.evaluation!.genericFlag
-        ? (JSON.parse(c.evaluation!.genericReasons) as string[])
-        : [],
-      duplicate: duplicates.get(c.id) ?? null,
-    }))
-    .sort((a, b) => b.totalScore - a.totalScore);
+    .map((c) => {
+      const evaluation = c.scoringStatus === "SCORED" ? c.evaluation : null;
+      return {
+        id: c.id,
+        name: c.name,
+        email: c.email,
+        uploadedAt: c.uploadedAt.toLocaleDateString(),
+        scoring: evaluation
+          ? ("scored" as const)
+          : c.scoringStatus === "PENDING" && !isScoringStale(c)
+            ? ("pending" as const)
+            : ("failed" as const),
+        scoringError: c.scoringError,
+        totalScore: evaluation?.totalScore ?? null,
+        verdict: evaluation?.verdict ?? null,
+        manualVerdictOverride: evaluation?.manualVerdictOverride ?? null,
+        flags: [
+          ...(evaluation?.overqualified ? ["Overqualified"] : []),
+          ...(evaluation?.keywordStuffing ? ["Skills listed without evidence"] : []),
+        ],
+        source: c.source,
+        status: c.status,
+        genericReasons: evaluation?.genericFlag ? (JSON.parse(evaluation.genericReasons) as string[]) : [],
+        duplicate: duplicates.get(c.id) ?? null,
+      };
+    })
+    .sort((a, b) => (b.totalScore ?? -1) - (a.totalScore ?? -1));
+  const scores = rows.flatMap((r) => (r.totalScore === null ? [] : [r.totalScore]));
 
   const boundSetStatus = setJobStatus.bind(null, job.id);
   const boundSetSalary = setJobSalary.bind(null, job.id);
@@ -163,11 +181,11 @@ export default async function JobDetailPage({
         <CvUploadDropzone jobId={job.id} />
       </div>
 
-      {rows.length > 0 && (
+      {scores.length > 0 && (
         <div>
           <h2 className="text-sm font-medium text-zinc-900 mb-3">Score distribution</h2>
           <div className="bg-white border border-zinc-200 rounded-xl p-5">
-            <ScoreHistogram scores={rows.map((r) => r.totalScore)} />
+            <ScoreHistogram scores={scores} />
           </div>
         </div>
       )}
@@ -183,7 +201,12 @@ export default async function JobDetailPage({
         <h2 className="text-sm font-medium text-zinc-900 mb-3">
           Ranked candidates
         </h2>
-        <CandidatesTable candidates={rows} jobId={job.id} searchAction={searchPipeline.bind(null, job.id)} />
+        <CandidatesTable
+          candidates={rows}
+          jobId={job.id}
+          searchAction={searchPipeline.bind(null, job.id)}
+          retryAction={retryScoring.bind(null, job.id)}
+        />
       </div>
     </div>
   );

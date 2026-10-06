@@ -32,6 +32,14 @@ enum Verdict {
   NOT_COMPATIBLE
 }
 
+// AI scoring runs after the CV is saved. FAILED means no score exists —
+// the UI shows "Scoring failed – retry", never a placeholder number.
+enum ScoringStatus {
+  PENDING
+  SCORED
+  FAILED
+}
+
 enum JobStatus {
   OPEN
   CLOSED
@@ -154,6 +162,10 @@ model Job {
   // a confirmation auto-closes the posting (autoClosedAt records when).
   lastVerifiedActive DateTime  @default(now())
   autoClosedAt       DateTime?
+  // AI-structured must-haves / nice-to-haves / required years, cached as
+  // JSON with a hash of the job text so every candidate is scored against
+  // the identical rubric. Rebuilt automatically if the job text changes.
+  scoringRubric      String?
   companyId          String
   createdBy          String
   createdAt          DateTime  @default(now())
@@ -185,6 +197,12 @@ model Candidate {
   // company whose CV text is near-identical. Informational only.
   duplicateOfId       String?
   duplicateSimilarity Float?
+  // `name` is taken from the CV when the AI can read one; the name typed on
+  // the application form is kept here when it differs.
+  formName            String?
+  scoringStatus       ScoringStatus     @default(PENDING)
+  scoringError        String?
+  scoringStartedAt    DateTime?
   uploadedAt          DateTime          @default(now())
 
   job           Job                     @relation(fields: [jobId], references: [id], onDelete: Cascade)
@@ -310,11 +328,28 @@ model Evaluation {
   candidateId           String   @unique
   totalScore            Int
   verdict               Verdict
-  skillsMatchScore      Int      @map("stackOverlapScore")
-  buildingScore         Int
-  startupToleranceScore Int
-  trackRecordScore      Int      @map("rangeScore")
-  redFlagScore          Int
+  // Rubric parts, each 0-100 before weighting: must-haves 50%, relevant
+  // experience 25%, nice-to-haves 15%, other 10%.
+  mustHaveScore         Int      @default(0)
+  experienceScore       Int      @default(0)
+  niceToHaveScore       Int      @default(0)
+  otherScore            Int      @default(0)
+  overqualified         Boolean  @default(false)
+  keywordStuffing       Boolean  @default(false)
+  // Full explanation (matched/missing must-haves, years, extracted profile)
+  // as JSON — see ScoringDetails in src/lib/scoring.ts.
+  details               String   @default("{}")
+  // Hash of scorer version + model + rubric + CV text: identical input
+  // reuses the stored result, so the same CV always gets the same score.
+  inputHash             String?
+  // "legacy" = scored by the old keyword scorer; rescore to upgrade.
+  scoringVersion        String   @default("legacy")
+  // Legacy keyword-scorer dimensions — kept so old rows still load.
+  skillsMatchScore      Int      @default(0) @map("stackOverlapScore")
+  buildingScore         Int      @default(0)
+  startupToleranceScore Int      @default(0)
+  trackRecordScore      Int      @default(0) @map("rangeScore")
+  redFlagScore          Int      @default(0)
   summary               String   @default("")
   strengths             String
   concerns              String
@@ -329,4 +364,6 @@ model Evaluation {
   evaluatedAt           DateTime @default(now())
 
   candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([inputHash])
 }

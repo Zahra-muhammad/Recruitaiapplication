@@ -9,15 +9,19 @@
     "lint": "eslint",
     "postinstall": "prisma generate",
     "vercel-build": "node scripts/vercel-build.mjs",
-    "db:local": "prisma dev --name recruitai --detach"
+    "db:local": "prisma dev --name recruitai --detach",
+    "test:scoring": "tsx --env-file-if-exists=.env scripts/test-scoring.ts",
+    "rescore": "tsx --env-file-if-exists=.env scripts/rescore-candidates.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@auth/prisma-adapter": "^2.11.3",
     "@gsap/react": "^2.1.2",
     "@prisma/client": "^6.19.3",
     "@vercel/blob": "^2.8.0",
     "bcryptjs": "^3.0.3",
     "gsap": "^3.15.0",
+    "mammoth": "^1.13.0",
     "next": "16.3.5",
     "next-auth": "^5.0.0-beta.32",
     "pdf-parse": "^2.4.5",

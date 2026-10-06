@@ -3,8 +3,9 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { applicantAuth } from "@/applicantAuth";
-import { scoreCandidate, evaluateApplicantQualification, type QualificationResult } from "@/lib/scoring";
-import { isPdfFile, storeAndParseCv, parseCvText, evaluationCreateInput } from "@/lib/cvIntake";
+import { evaluateApplicantQualification, type QualificationResult } from "@/lib/scoring";
+import { isCvFile, storeAndParseCv, parseCvText } from "@/lib/cvIntake";
+import { scoreInBackground } from "@/lib/scoringRun";
 import { notifyCompany } from "@/lib/notifications";
 import { queueEmail, appUrl } from "@/lib/email";
 import { newStatusToken } from "@/lib/statusToken";
@@ -45,7 +46,7 @@ async function assertNotAlreadyApplied(jobId: string, email: string, applicantId
 }
 
 // Shared by the regular apply form and one-click profile apply: creates the
-// Candidate + Evaluation, notifies the company, and queues the applicant's
+// Candidate (scored by AI after the response is sent), notifies the company, and queues the applicant's
 // confirmation email with their private status link. Returns the token.
 async function createApplication(
   job: OpenJob,
@@ -60,7 +61,6 @@ async function createApplication(
     applicantId: string | null;
   }
 ): Promise<string> {
-  const evaluation = scoreCandidate(input.extractedText, job, { coverNote: input.coverNote });
   const duplicate = await findLikelyDuplicate(job.companyId, input.extractedText);
   const statusToken = newStatusToken();
 
@@ -79,7 +79,6 @@ async function createApplication(
       applicantId: input.applicantId,
       duplicateOfId: duplicate?.candidateId ?? null,
       duplicateSimilarity: duplicate?.similarity ?? null,
-      evaluation: { create: evaluationCreateInput(evaluation) },
     },
   });
 
@@ -90,6 +89,8 @@ async function createApplication(
     `${input.name} applied to ${job.title}`,
     `/dashboard/${job.id}`
   );
+
+  scoreInBackground([candidate.id]);
 
   await queueEmail({
     to: input.email,
@@ -139,10 +140,10 @@ export async function applyToJob(jobId: string, formData: FormData) {
     extractedText = applicant.savedCvText;
   } else {
     if (!(cv instanceof File) || cv.size === 0) {
-      throw new Error("A CV (PDF) is required.");
+      throw new Error("A CV (PDF or Word) is required.");
     }
-    if (!isPdfFile(cv)) {
-      throw new Error("CV must be a PDF file.");
+    if (!isCvFile(cv)) {
+      throw new Error("CV must be a PDF or Word (.docx) file.");
     }
     const parsed = await storeAndParseCv(jobId, cv);
     storedPath = parsed.storedPath;
@@ -216,10 +217,10 @@ export async function checkFit(jobId: string, formData: FormData): Promise<Quali
   } else {
     const cv = formData.get("cv");
     if (!(cv instanceof File) || cv.size === 0) {
-      throw new Error("Please attach your CV as a PDF.");
+      throw new Error("Please attach your CV as a PDF or Word file.");
     }
-    if (!isPdfFile(cv)) {
-      throw new Error("CV must be a PDF file.");
+    if (!isCvFile(cv)) {
+      throw new Error("CV must be a PDF or Word (.docx) file.");
     }
     extractedText = await parseCvText(cv);
   }

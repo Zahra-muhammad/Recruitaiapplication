@@ -20,7 +20,7 @@ export function guessNameFromText(text: string): string | null {
 }
 
 export function nameFromFileName(fileName: string): string {
-  const withoutExt = fileName.replace(/\.pdf$/i, "");
+  const withoutExt = fileName.replace(/\.(pdf|docx)$/i, "");
   const spaced = withoutExt.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   return spaced
     .split(" ")

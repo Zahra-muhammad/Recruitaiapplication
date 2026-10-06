@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { applicantAuth } from "@/applicantAuth";
 import { prisma } from "@/lib/prisma";
-import { isPdfFile, storeAndParseApplicantCv } from "@/lib/cvIntake";
+import { isCvFile, storeAndParseApplicantCv } from "@/lib/cvIntake";
 import type { NoticePeriod, RemotePreference, Seniority, WorkAuthorization } from "@prisma/client";
 
 const VALID_SENIORITIES: Seniority[] = ["ENTRY", "MID", "SENIOR", "LEAD", "EXECUTIVE"];
@@ -96,7 +96,7 @@ export async function updateProfile(formData: FormData) {
   };
 
   if (cv instanceof File && cv.size > 0) {
-    if (!isPdfFile(cv)) throw new Error("CV must be a PDF file.");
+    if (!isCvFile(cv)) throw new Error("CV must be a PDF or Word (.docx) file.");
     const { storedPath, extractedText } = await storeAndParseApplicantCv(user.id, cv);
     data.savedCvFileUrl = storedPath;
     data.savedCvText = extractedText;

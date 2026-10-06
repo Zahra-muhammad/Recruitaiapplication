@@ -1,0 +1,11 @@
+{
+  "_note": "Expected outcomes for the scoring test only. The scorer never reads this file.",
+  "layla-haddad": { "name": "Layla Haddad", "expect": ["COMPATIBLE"] },
+  "aisha-bello": { "name": "Aisha Bello", "expect": ["COMPATIBLE"] },
+  "rahul-menon": { "name": "Rahul Menon", "expect": ["COMPATIBLE"] },
+  "sara-al-mansoori": { "name": "Sara Al Mansoori", "expect": ["BORDERLINE"], "why": "too junior" },
+  "mariam-siddiqui": { "name": "Mariam Siddiqui", "expect": ["BORDERLINE"], "why": "backend moving to frontend" },
+  "daniel-okafor": { "name": "Daniel Okafor", "expect": ["NOT_COMPATIBLE", "FLAGGED"], "why": "keyword stuffer" },
+  "elena-petrova": { "name": "Elena Petrova", "expect": ["NOT_COMPATIBLE", "FLAGGED"], "why": "overqualified" },
+  "omar-farouk": { "name": "Omar Farouk", "expect": ["NOT_COMPATIBLE"], "why": "chef" }
+}

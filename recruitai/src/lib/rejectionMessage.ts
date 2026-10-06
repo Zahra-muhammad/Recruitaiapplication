@@ -5,9 +5,8 @@
 // evaluation, so it reads like it was written for them. Never a score or
 // verdict.
 
-import type { Job } from "@prisma/client";
-import { matchRequirements, shortRequirementLabel } from "@/lib/requirements";
-import { scoreCandidate } from "@/lib/scoring";
+import { shortRequirementLabel } from "@/lib/requirements";
+import type { ScoringDetails } from "@/lib/scoring";
 
 export interface RejectionDraftInput {
   applicantName: string;
@@ -23,47 +22,19 @@ export interface RejectionDraftInput {
   gapArea?: string;
 }
 
-// Applicant-friendly wording for the weaker scoring dimensions — used as the
-// gap area when every listed requirement was met.
-const DIMENSION_GAP_PHRASES: Record<string, string> = {
-  "0→1 building evidence": "building and owning work from the ground up",
-  "Startup/ambiguity tolerance": "early-stage, small-team environments",
-  "Track record of measurable impact": "measurable, quantified results in similar work",
-};
+// Picks the strength and gap for this candidate from their stored
+// evaluation: strength = their best-evidenced must-have; gap = a must-have
+// they didn't demonstrate (else experience, if they were short of it).
+export function pickStrengthAndGap(details: ScoringDetails | null): { strength?: string; gapArea?: string } {
+  if (!details) return {};
+  const best = [...details.mustHaves].sort((a, b) => b.credit - a.credit)[0];
+  const strength = best && best.credit >= 0.5 ? shortRequirementLabel(best.requirement) : undefined;
 
-// Uses the candidate's own capitalisation for short skills ("react" as typed
-// on the job → "React" as written on their CV).
-function asWrittenInCv(label: string, cvText: string): string {
-  if (label.includes(" ") || label.length > 30) return label;
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return cvText.match(new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "i"))?.[0] ?? label;
-}
-
-// Picks the strength and gap for this candidate from their evaluation:
-// strength = a job requirement their CV matches (else their strongest
-// evidence); gap = a requirement it doesn't (else their weakest dimension).
-export function pickStrengthAndGap(cvText: string, job: Job): { strength?: string; gapArea?: string } {
-  const { matched, missing } = matchRequirements(cvText, job.keySkills);
-  const evaluation = scoreCandidate(cvText, job);
-
-  let strength = matched[0] ? asWrittenInCv(shortRequirementLabel(matched[0]), cvText) : undefined;
-  if (!strength) {
-    const best = [...evaluation.dimensionDetails]
-      .filter((d) => d.dimension !== "Red flags" && d.keywords.length > 0)
-      .sort((a, b) => b.score - a.score)[0];
-    if (best?.dimension === "Track record of measurable impact") strength = "delivering measurable results";
-    else if (best?.dimension === "0→1 building evidence") strength = "building things from scratch";
-    else if (best?.dimension === "Startup/ambiguity tolerance") strength = "working in fast-moving, small teams";
+  const missing = details.mustHaves.find((r) => !r.demonstrated);
+  let gapArea = missing ? shortRequirementLabel(missing.requirement) : undefined;
+  if (!gapArea && details.experience.relevantYears < details.experience.requiredYears) {
+    gapArea = "the depth of hands-on experience this role needs";
   }
-
-  let gapArea = missing[0] ? shortRequirementLabel(missing[0]) : undefined;
-  if (!gapArea) {
-    const weakest = [...evaluation.dimensionDetails]
-      .filter((d) => DIMENSION_GAP_PHRASES[d.dimension])
-      .sort((a, b) => a.score - b.score)[0];
-    if (weakest && weakest.score < 70) gapArea = DIMENSION_GAP_PHRASES[weakest.dimension];
-  }
-
   return { strength, gapArea };
 }
 

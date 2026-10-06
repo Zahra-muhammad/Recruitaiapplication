@@ -43,7 +43,7 @@ export default function ProfileForm({
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { "application/pdf": [".pdf"] },
+    accept: { "application/pdf": [".pdf"], "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"] },
     multiple: false,
     disabled: pending,
   });
@@ -292,7 +292,7 @@ export default function ProfileForm({
 
       <div>
         <label className="block text-sm font-medium text-zinc-700 mb-1">
-          Saved CV (PDF) <span className="text-zinc-400 font-normal">(optional)</span>
+          Saved CV (PDF or Word) <span className="text-zinc-400 font-normal">(optional)</span>
         </label>
         <div
           {...getRootProps()}
@@ -308,7 +308,7 @@ export default function ProfileForm({
               ? `Selected: ${file.name}`
               : isDragActive
               ? "Drop your CV here"
-              : "Drag & drop a CV (PDF), or click to select"}
+              : "Drag & drop a CV (PDF or Word), or click to select"}
           </p>
           <p className="text-xs text-zinc-400 mt-1">
             {defaults.hasSavedCv

@@ -1,0 +1,10 @@
+{
+  "title": "Senior Frontend Developer",
+  "seniority": "SENIOR",
+  "stage": "scaling",
+  "location": "Remote (UTC+0 to UTC+4)",
+  "description": "We're a 60-person B2B SaaS company building a scheduling platform used by 4,000 clinics. You'll join a product team of 8 and own large parts of our customer-facing web app.\n\nRequirements:\n- 5+ years of professional frontend development experience\n- Expert-level React (hooks, state management, component architecture)\n- Strong TypeScript\n- Modern CSS and responsive layouts\n- Automated testing of UI code (e.g. Jest, React Testing Library, Playwright or Cypress)\n- Web accessibility (WCAG 2.1 AA)\n- Web performance optimisation (Core Web Vitals, bundle size, rendering)\n\nNice to have:\n- Next.js or another React meta-framework\n- GraphQL\n- Building or maintaining a design system / component library\n- Mentoring other engineers\n- CI/CD pipelines for frontend apps\n\nThis is an individual-contributor role at senior level, not a management position.",
+  "keySkills": "React, TypeScript, CSS, Testing, Accessibility, Performance",
+  "stageContext": "Series B, product-market fit reached, scaling the product and the team.",
+  "whatTheyOwnFirst": "Rebuild the appointment booking flow for performance and accessibility.\nSet up visual regression testing for the component library."
+}

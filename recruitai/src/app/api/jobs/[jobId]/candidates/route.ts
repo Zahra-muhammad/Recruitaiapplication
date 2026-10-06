@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { scoreCandidate } from "@/lib/scoring";
-import { isPdfFile, storeAndParseCv, evaluationCreateInput } from "@/lib/cvIntake";
+import { isCvFile, storeAndParseCv, CvReadError } from "@/lib/cvIntake";
 import { extractEmail, guessNameFromText, nameFromFileName } from "@/lib/cvParse";
 import { newStatusToken } from "@/lib/statusToken";
 import { findLikelyDuplicate } from "@/lib/duplicateDetection";
+import { scoreInBackground } from "@/lib/scoringRun";
+
+// AI scoring runs after the response; give it room to finish a batch.
+export const maxDuration = 300;
 
 export async function POST(
   req: Request,
@@ -33,46 +36,45 @@ export async function POST(
   }
 
   const results: { fileName: string; status: "ok" | "error"; error?: string; candidateId?: string }[] = [];
+  const toScore: string[] = [];
 
   for (const file of files) {
     try {
-      if (!isPdfFile(file)) {
-        results.push({ fileName: file.name, status: "error", error: "Not a PDF file" });
+      if (!isCvFile(file)) {
+        results.push({ fileName: file.name, status: "error", error: "Not a PDF or Word (.docx) file" });
         continue;
       }
 
       const { storedPath, extractedText } = await storeAndParseCv(jobId, file);
-
-      const email = extractEmail(extractedText);
-      const name = guessNameFromText(extractedText) ?? nameFromFileName(file.name);
-
-      const evaluation = scoreCandidate(extractedText, job);
       const duplicate = await findLikelyDuplicate(job.companyId, extractedText);
 
+      // Placeholder name/email until the AI reads them from the CV.
       const candidate = await prisma.candidate.create({
         data: {
           jobId,
           statusToken: newStatusToken(),
-          name,
-          email,
+          name: guessNameFromText(extractedText) ?? nameFromFileName(file.name),
+          email: extractEmail(extractedText),
           cvFileUrl: storedPath,
           extractedText,
           source: "RECRUITER_UPLOADED",
           duplicateOfId: duplicate?.candidateId ?? null,
           duplicateSimilarity: duplicate?.similarity ?? null,
-          evaluation: { create: evaluationCreateInput(evaluation) },
         },
       });
 
+      toScore.push(candidate.id);
       results.push({ fileName: file.name, status: "ok", candidateId: candidate.id });
     } catch (err) {
+      console.error(`[upload] ${file.name} failed`, err);
       results.push({
         fileName: file.name,
         status: "error",
-        error: err instanceof Error ? err.message : "Failed to process file",
+        error: err instanceof CvReadError ? err.message : "Failed to process file",
       });
     }
   }
 
+  scoreInBackground(toScore);
   return NextResponse.json({ results });
 }

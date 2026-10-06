@@ -1,10 +1,11 @@
 // Interview questions aimed at one candidate's specific gaps and concerns,
-// taken from their evaluation. Each carries the reason it was asked, so the
-// recruiter knows what it's probing. Rule-based; the recruiter edits freely.
+// taken from their stored evaluation. Each carries the reason it was asked,
+// so the recruiter knows what it's probing. Rule-based; the recruiter edits
+// freely.
 
 import type { Job } from "@prisma/client";
-import { scoreCandidate } from "@/lib/scoring";
-import { matchRequirements, shortRequirementLabel } from "@/lib/requirements";
+import { shortRequirementLabel } from "@/lib/requirements";
+import type { ScoringDetails } from "@/lib/scoring";
 
 export interface InterviewQuestion {
   question: string;
@@ -12,6 +13,7 @@ export interface InterviewQuestion {
 }
 
 const MAX_QUESTIONS = 6;
+const MIN_QUESTIONS = 5;
 
 // First line/sentence of a multi-line field, without trailing punctuation.
 function firstLine(text: string): string {
@@ -22,88 +24,68 @@ function firstLine(text: string): string {
 function lowerFirst(s: string): string {
   return /^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
 }
-const MIN_QUESTIONS = 5;
 
-export function generateInterviewQuestions(cvText: string, job: Job): InterviewQuestion[] {
-  const evaluation = scoreCandidate(cvText, job);
-  const dims = new Map(evaluation.dimensionDetails.map((d) => [d.dimension, d]));
-  const { matched, missing } = matchRequirements(cvText, job.keySkills);
+export function generateInterviewQuestions(
+  details: ScoringDetails,
+  job: Job,
+  flags: { overqualified: boolean; keywordStuffing: boolean }
+): InterviewQuestion[] {
   const questions: InterviewQuestion[] = [];
+  const missing = details.mustHaves.filter((r) => !r.demonstrated);
+  const partial = details.mustHaves.filter((r) => r.demonstrated && r.credit < 1);
+  const strong = details.mustHaves.filter((r) => r.credit >= 1);
 
-  // 1. Missing requirements — the most direct gaps (at most two).
+  // 1. Missing must-haves — the most direct gaps (at most two).
   const missingPhrasings = [
     (label: string) =>
-      `This role needs ${label}, which your CV doesn't mention. What's your experience there — what did you do, and what came of it?`,
+      `This role needs ${label}, which your CV doesn't show. What's your experience there — what did you do, and what came of it?`,
     (label: string) =>
       `Walk me through the closest thing you've done to ${label}. What was your part, and what would you need to learn to do it here?`,
   ];
-  missing.slice(0, 2).forEach((req, i) => {
+  missing.slice(0, 2).forEach((r, i) => {
     questions.push({
-      question: missingPhrasings[i](shortRequirementLabel(req)),
-      reason: `Missing requirement: "${req}"`,
+      question: missingPhrasings[i](shortRequirementLabel(r.requirement)),
+      reason: `Missing must-have: "${r.requirement}"${r.evidenceType === "skills_list_only" ? " (only listed as a skill)" : ""}`,
     });
   });
 
-  // 2. Red flags, each probed directly.
-  const redFlags = dims.get("Red flags")?.keywords ?? [];
-  if (redFlags.some((f) => /Only large-team experience/.test(f))) {
-    questions.push({
-      question: "What's the smallest team you've worked in, and what did you own there that nobody else did?",
-      reason: "Red flag: only large-team experience mentioned",
-    });
-  }
-  if (redFlags.some((f) => /Skill list reads as generic/.test(f))) {
+  // 2. Flags, each probed directly.
+  if (flags.keywordStuffing) {
     questions.push({
       question:
-        "Pick one skill from your CV and walk me through a specific project where you used it — your part, what got in the way, and the result.",
-      reason: "Red flag: skills listed without concrete examples",
+        "Pick one technology from your skills list and walk me through a specific project where you used it — your part, what got in the way, and the result.",
+      reason: "Flag: skills listed without work showing them used",
     });
   }
-
-  // 3. Weak dimensions.
-  const building = dims.get("0→1 building evidence");
-  if (building && building.score < 50) {
+  if (flags.overqualified) {
     questions.push({
-      question:
-        "Tell me about something you built or owned end to end, where there was no playbook. What did you do in the first two weeks?",
-      reason:
-        building.keywords.length === 0
-          ? "No evidence of building or owning work from scratch"
-          : `Thin ownership evidence (${building.keywords.join(", ")})`,
+      question: `This is a ${details.rubric.roleLevel.toLowerCase()} role. What draws you to it at this point in your career, and what would you want from it in two years?`,
+      reason: `Flag: overqualified — ${details.seniorityReason}`,
     });
   }
 
-  const startup = dims.get("Startup/ambiguity tolerance");
-  if (startup && startup.score < 50) {
-    const signals = startup.headline.match(/big-corp-only signal\(s\) \(([^)]+)\)/)?.[1];
+  // 3. Thin evidence and experience shortfall.
+  for (const r of partial.slice(0, 2)) {
     questions.push({
-      question: signals
-        ? "Your background looks mostly large-company and process-driven. Tell me about a time you had to make a call with no clear process and no one to escalate to."
-        : "Tell me about a time priorities changed suddenly and there was no process to follow. How did you decide what to do?",
-      reason: signals
-        ? `Large-company / process-heavy signals (${signals.split(", ").slice(0, 3).join(", ")})`
-        : "No evidence of small-team or ambiguous environments",
+      question: `Tell me about the most complex work you've done in ${shortRequirementLabel(r.requirement)} — what made it hard, and what did you decide?`,
+      reason: `Limited evidence for "${r.requirement}": ${r.evidence}`,
     });
   }
-
-  const track = dims.get("Track record of measurable impact");
-  if (track && track.score < 50) {
+  const { relevantYears, requiredYears } = details.experience;
+  if (requiredYears > 0 && relevantYears < requiredYears) {
     questions.push({
-      question:
-        "Pick one achievement from your CV and put numbers on it — what moved, by how much, and how do you know it was your work?",
-      reason:
-        track.keywords.length === 0 ? "No quantified results on the CV" : "Few quantified results on the CV",
+      question: "Which of your past work is closest to what this role does day to day, and what did you own there yourself?",
+      reason: `${relevantYears} years of relevant experience vs ${requiredYears} required`,
     });
   }
 
-  // 4. Fill up: validate their strongest claim and the role's first priority,
-  //    then (for candidates with few gaps) further claims, until MIN_QUESTIONS.
+  // 4. Fill up: validate their strongest claim and the role's first priority.
   const firstPriority = firstLine(job.whatTheyOwnFirst);
   const fillers: InterviewQuestion[] = [];
-  if (matched[0]) {
+  if (strong[0]) {
     fillers.push({
-      question: `Your CV shows experience in ${shortRequirementLabel(matched[0])}. What's the hardest problem you hit there, and what would you do differently now?`,
-      reason: `Validating a claimed strength: "${matched[0]}"`,
+      question: `Your CV shows strong experience in ${shortRequirementLabel(strong[0].requirement)}. What's the hardest problem you hit there, and what would you do differently now?`,
+      reason: `Validating a claimed strength: "${strong[0].requirement}"`,
     });
   }
   if (firstPriority) {
@@ -112,16 +94,10 @@ export function generateInterviewQuestions(cvText: string, job: Job): InterviewQ
       reason: "Role fit: what they'd own first",
     });
   }
-  for (const req of matched.slice(1, 3)) {
+  for (const r of strong.slice(1, 3)) {
     fillers.push({
-      question: `Give me a specific example of your work in ${shortRequirementLabel(req)} — the situation, what you did, and the outcome.`,
-      reason: `Validating a claimed strength: "${req}"`,
-    });
-  }
-  if (missing[2]) {
-    fillers.push({
-      question: missingPhrasings[0](shortRequirementLabel(missing[2])),
-      reason: `Missing requirement: "${missing[2]}"`,
+      question: `Give me a specific example of your work in ${shortRequirementLabel(r.requirement)} — the situation, what you did, and the outcome.`,
+      reason: `Validating a claimed strength: "${r.requirement}"`,
     });
   }
   fillers.push(
@@ -131,7 +107,7 @@ export function generateInterviewQuestions(cvText: string, job: Job): InterviewQ
     },
     {
       question: `What would you most need to learn in your first 90 days as ${job.title}, and how would you go about it?`,
-      reason: "Self-awareness about ramp-up (few gaps found on the CV)",
+      reason: "Self-awareness about ramp-up",
     }
   );
 

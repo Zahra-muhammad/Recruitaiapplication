@@ -5,15 +5,20 @@ import Link from "next/link";
 import VerdictBadge from "./VerdictBadge";
 import SourceTag from "./SourceTag";
 import ApplicationStatusBadge from "./ApplicationStatusBadge";
+import ScoringStatus from "./ScoringStatus";
 
 export interface CandidateRow {
   id: string;
   name: string;
   email: string | null;
   uploadedAt: string;
-  totalScore: number;
-  verdict: string;
+  scoring: "scored" | "pending" | "failed";
+  scoringError: string | null;
+  // null until scored — never a placeholder number.
+  totalScore: number | null;
+  verdict: string | null;
   manualVerdictOverride: string | null;
+  flags: string[];
   source: string;
   status: string;
   genericReasons: string[];
@@ -48,11 +53,13 @@ export default function CandidatesTable({
   candidates,
   jobId,
   searchAction,
+  retryAction,
 }: {
   candidates: CandidateRow[];
   jobId: string;
   // Natural-language pipeline search, run on the server.
   searchAction?: (query: string) => Promise<PipelineSearchResult>;
+  retryAction?: (candidateId: string) => Promise<void>;
 }) {
   const [askQuery, setAskQuery] = useState("");
   const [askResult, setAskResult] = useState<{ ids: Set<string>; interpretation: string[] } | null>(null);
@@ -70,7 +77,7 @@ export default function CandidatesTable({
       const effectiveVerdict = c.manualVerdictOverride ?? c.verdict;
       if (filter !== "ALL" && effectiveVerdict !== filter) return false;
       if (sourceFilter !== "ALL" && c.source !== sourceFilter) return false;
-      if (c.totalScore < minScore) return false;
+      if (minScore > 0 && (c.totalScore ?? -1) < minScore) return false;
       if (q && !`${c.name} ${c.email ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -99,8 +106,8 @@ export default function CandidatesTable({
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { ALL: candidates.length, COMPATIBLE: 0, BORDERLINE: 0, NOT_COMPATIBLE: 0 };
     for (const cand of candidates) {
-      const v = (cand.manualVerdictOverride ?? cand.verdict) as Filter;
-      if (v in c) c[v]++;
+      const v = (cand.manualVerdictOverride ?? cand.verdict) as Filter | null;
+      if (v && v in c) c[v]++;
     }
     return c;
   }, [candidates]);
@@ -249,9 +256,10 @@ export default function CandidatesTable({
             <tbody>
               {filtered.map((c, i) => {
                 const effectiveVerdict = c.manualVerdictOverride ?? c.verdict;
+                const scored = c.totalScore !== null && effectiveVerdict !== null;
                 return (
                   <tr key={c.id} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50 transition-colors">
-                    <td className="px-4 py-3 text-zinc-400 font-mono text-xs">{i + 1}</td>
+                    <td className="px-4 py-3 text-zinc-400 font-mono text-xs">{scored ? i + 1 : "—"}</td>
                     <td className="px-4 py-3">
                       <Link
                         href={`/dashboard/${jobId}/candidates/${c.id}`}
@@ -268,6 +276,14 @@ export default function CandidatesTable({
                           Possibly generic application
                         </span>
                       )}
+                      {c.flags.map((f) => (
+                        <span
+                          key={f}
+                          className="inline-block mt-1 mr-1 text-[10px] font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-full px-2 py-0.5"
+                        >
+                          Flagged: {f}
+                        </span>
+                      ))}
                       {c.duplicate && (
                         <Link
                           href={c.duplicate.href}
@@ -279,12 +295,24 @@ export default function CandidatesTable({
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-semibold text-zinc-900">{c.totalScore}</span>
-                      <span className="text-zinc-400">/100</span>
+                      {scored ? (
+                        <>
+                          <span className="font-semibold text-zinc-900">{c.totalScore}</span>
+                          <span className="text-zinc-400">/100</span>
+                        </>
+                      ) : (
+                        <span title={c.scoringError ?? undefined}>
+                          <ScoringStatus
+                            state={c.scoring === "pending" ? "pending" : "failed"}
+                            retryAction={retryAction ? () => retryAction(c.id) : undefined}
+                            compact
+                          />
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
-                        <VerdictBadge verdict={effectiveVerdict} />
+                        {scored && <VerdictBadge verdict={effectiveVerdict} />}
                         {c.manualVerdictOverride && (
                           <span className="text-[10px] text-zinc-400" title="Manually overridden">
                             (edited)

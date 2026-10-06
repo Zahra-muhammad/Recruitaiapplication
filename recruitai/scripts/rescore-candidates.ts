@@ -1,49 +1,57 @@
-// Re-runs scoreCandidate for every stored candidate — use after changing the
-// scoring logic. Recruiter notes and manual verdict overrides are preserved.
+// Re-scores stored candidates with the current AI scorer — use after
+// changing prompts or scoring rules, or to upgrade rows scored by the old
+// keyword scorer. Recruiter notes, manual verdict overrides and interview
+// questions are preserved. Needs ANTHROPIC_API_KEY and DATABASE_URL.
 //
-//   npx tsx scripts/rescore-candidates.ts --dry-run   (print before/after only)
-//   npx tsx scripts/rescore-candidates.ts             (write the new scores)
+//   npx tsx scripts/rescore-candidates.ts              (only legacy, failed or stuck candidates)
+//   npx tsx scripts/rescore-candidates.ts --all        (every candidate — costs one AI run each)
+//   npx tsx scripts/rescore-candidates.ts --job <id>   (limit to one job)
 
-import { PrismaClient } from "@prisma/client";
-import { scoreCandidate } from "../src/lib/scoring";
-import { evaluationCreateInput } from "../src/lib/cvIntake";
+import { prisma } from "../src/lib/prisma";
+import { runScoringBatch } from "../src/lib/scoringRun";
+import { SCORING_VERSION } from "../src/lib/scoring";
 
-const prisma = new PrismaClient();
-const dryRun = process.argv.includes("--dry-run");
+const all = process.argv.includes("--all");
+const jobArg = process.argv.indexOf("--job");
+const jobId = jobArg > -1 ? process.argv[jobArg + 1] : undefined;
 
 async function main() {
   const candidates = await prisma.candidate.findMany({
-    where: { evaluation: { isNot: null } },
-    include: { evaluation: true, job: { include: { company: { select: { name: true } } } } },
+    where: {
+      ...(jobId ? { jobId } : {}),
+      ...(all
+        ? {}
+        : {
+            OR: [
+              { scoringStatus: { not: "SCORED" } },
+              { evaluation: { is: null } },
+              { evaluation: { scoringVersion: { not: SCORING_VERSION } } },
+            ],
+          }),
+    },
+    include: { evaluation: { select: { totalScore: true, verdict: true } } },
     orderBy: [{ jobId: "asc" }, { name: "asc" }],
   });
+  console.log(`Scoring ${candidates.length} candidate(s)…`);
 
-  let changed = 0;
-  for (const c of candidates) {
-    const before = c.evaluation!;
-    const after = scoreCandidate(c.extractedText, c.job, { coverNote: c.coverNote });
-    const verdictChanged = before.verdict !== after.verdict;
-    if (before.totalScore !== after.totalScore || verdictChanged) changed++;
+  await runScoringBatch(candidates.map((c) => c.id));
 
+  const after = await prisma.candidate.findMany({
+    where: { id: { in: candidates.map((c) => c.id) } },
+    include: { evaluation: { select: { totalScore: true, verdict: true } }, job: { select: { title: true } } },
+    orderBy: [{ jobId: "asc" }, { name: "asc" }],
+  });
+  const before = new Map(candidates.map((c) => [c.id, c.evaluation]));
+  for (const c of after) {
+    const b = before.get(c.id);
+    const now = c.scoringStatus === "SCORED" && c.evaluation
+      ? `${String(c.evaluation.totalScore).padStart(3)} ${c.evaluation.verdict}`
+      : `FAILED: ${c.scoringError}`;
     console.log(
-      `${c.job.title.slice(0, 24).padEnd(24)} ${c.name.slice(0, 20).padEnd(20)} ` +
-        `${String(before.totalScore).padStart(3)} ${before.verdict.padEnd(14)} -> ` +
-        `${String(after.totalScore).padStart(3)} ${after.verdict.padEnd(14)}` +
-        `${verdictChanged ? " *" : ""}${before.manualVerdictOverride ? ` (override kept: ${before.manualVerdictOverride})` : ""}`
+      `${c.job.title.slice(0, 24).padEnd(24)} ${c.name.slice(0, 22).padEnd(22)} ` +
+        `${b ? `${String(b.totalScore).padStart(3)} ${b.verdict.padEnd(14)}` : "  — (none)        "} -> ${now}`
     );
-
-    if (!dryRun) {
-      // Omits notes and manualVerdictOverride, so they're left untouched.
-      await prisma.evaluation.update({
-        where: { candidateId: c.id },
-        data: evaluationCreateInput(after),
-      });
-    }
   }
-
-  console.log(
-    `\n${candidates.length} candidates, ${changed} with a new score or verdict${dryRun ? " (dry run — nothing written)" : " — saved"}.`
-  );
 }
 
 main().finally(() => prisma.$disconnect());
