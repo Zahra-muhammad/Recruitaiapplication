@@ -70,7 +70,8 @@ async function readDocx(buffer: Buffer): Promise<string> {
   return text;
 }
 
-export async function extractCvText(buffer: Buffer, format: CvFormat): Promise<string> {
+// `label` names the document in error messages ("CV", "job description").
+export async function extractCvText(buffer: Buffer, format: CvFormat, label = "CV"): Promise<string> {
   let text: string;
   try {
     text = format === "pdf" ? await readPdf(buffer) : await readDocx(buffer);
@@ -80,7 +81,7 @@ export async function extractCvText(buffer: Buffer, format: CvFormat): Promise<s
   }
   if (text.length < MIN_CV_CHARS) {
     throw new CvReadError(
-      "We couldn't read enough text from this CV — it may be a scanned image. Please upload a text-based PDF or a Word (.docx) file."
+      `We couldn't read enough text from this ${label} — it may be a scanned image. Please upload a text-based PDF or a Word (.docx) file.`
     );
   }
   return text;

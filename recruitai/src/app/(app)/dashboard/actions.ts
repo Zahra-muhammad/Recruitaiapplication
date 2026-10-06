@@ -7,11 +7,41 @@ import { prisma } from "@/lib/prisma";
 import { notifyApplicant } from "@/lib/notifications";
 import { jobMatchesSavedSearch } from "@/lib/savedSearchMatch";
 import { parseSalaryFields } from "@/lib/salary";
+import { cvFormat, extractCvText, CvReadError } from "@/lib/cvIntake";
+import { extractJobDraft, type JobDraft } from "@/lib/jobImport";
+import { AiCallError } from "@/lib/ai/claude";
 import type { JobStatus, Seniority, Stage } from "@prisma/client";
 
 const STAGES: Stage[] = ["pre_product", "early_users", "scaling"];
 const JOB_STATUSES: JobStatus[] = ["OPEN", "CLOSED"];
 const SENIORITIES: Seniority[] = ["ENTRY", "MID", "SENIOR", "LEAD", "EXECUTIVE"];
+
+const MAX_JD_BYTES = 4 * 1024 * 1024;
+
+// Reads an uploaded job description and returns form values for the
+// recruiter to review — nothing is saved. Errors come back as a message
+// (thrown messages are hidden in production).
+export async function importJobDescription(
+  formData: FormData
+): Promise<{ draft: JobDraft } | { error: string }> {
+  const session = await auth();
+  if (!session?.user) return { error: "Please sign in again." };
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose a PDF or Word file first." };
+  if (file.size > MAX_JD_BYTES) return { error: "That file is over 4MB." };
+  const format = cvFormat(file);
+  if (!format) return { error: "Upload a PDF or Word (.docx) file." };
+
+  try {
+    const text = await extractCvText(Buffer.from(await file.arrayBuffer()), format, "job description");
+    return { draft: await extractJobDraft(text) };
+  } catch (err) {
+    console.error("[job-import] failed", err);
+    if (err instanceof CvReadError || err instanceof AiCallError) return { error: err.message };
+    return { error: "Couldn't read this job description. Please try again, or fill in the form by hand." };
+  }
+}
 
 export async function createJob(formData: FormData) {
   const session = await auth();
