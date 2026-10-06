@@ -1,45 +1,60 @@
+import Link from "next/link";
 import { applicantAuth } from "@/applicantAuth";
 import { prisma } from "@/lib/prisma";
-import ProfileForm from "@/components/ProfileForm";
-import { updateProfile } from "./actions";
+import ProfileView from "@/components/ProfileView";
+import { missingProfileParts } from "@/lib/applicantProfile";
 
 export default async function ProfilePage() {
   const session = await applicantAuth();
-  const sessionUser = session?.user as { id: string; email?: string | null } | undefined;
+  const sessionUser = session?.user as { id: string } | undefined;
   if (!sessionUser) return null;
 
-  const applicant = await prisma.applicant.findUnique({ where: { id: sessionUser.id } });
-  if (!applicant) return null;
+  const profile = await prisma.applicant.findUnique({
+    where: { id: sessionUser.id },
+    include: {
+      experiences: { orderBy: { sortOrder: "asc" } },
+      educations: { orderBy: { sortOrder: "asc" } },
+    },
+  });
+  if (!profile) return null;
+
+  const missing = missingProfileParts(profile);
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-8">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold text-zinc-900">Your profile</h1>
-        <p className="text-sm text-zinc-500 mt-0.5">
-          {applicant.email} · Save your details once and reuse them to apply faster.
-        </p>
-      </div>
+    <div className="max-w-3xl mx-auto px-6 py-8 space-y-4">
+      {missing.length > 0 ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-amber-950">Finish your profile</p>
+            <p className="text-xs text-amber-900/80 mt-0.5">Still needed: {missing.join(", ")}.</p>
+          </div>
+          <Link href="/my/profile/edit" className="bg-blue-600 text-white text-sm font-medium rounded-md px-4 py-2 hover:bg-blue-700">
+            Complete profile
+          </Link>
+        </div>
+      ) : (
+        !profile.openToWork && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 text-sm text-blue-950">
+            Your profile is private. Switch on <span className="font-medium">Open to work</span> in{" "}
+            <Link href="/my/profile/edit" className="font-medium underline">
+              Edit profile
+            </Link>{" "}
+            to let recruiters find you and invite you to apply.
+          </div>
+        )
+      )}
 
-      <ProfileForm
-        defaults={{
-          name: applicant.name,
-          phone: applicant.phone ?? "",
-          headline: applicant.headline ?? "",
-          skills: applicant.skills ?? "",
-          linkedinUrl: applicant.linkedinUrl ?? "",
-          portfolioUrl: applicant.portfolioUrl ?? "",
-          seniority: applicant.seniority ?? "",
-          location: applicant.location ?? "",
-          desiredTitle: applicant.desiredTitle ?? "",
-          yearsOfExperience: applicant.yearsOfExperience?.toString() ?? "",
-          workAuthorization: applicant.workAuthorization ?? "",
-          remotePreference: applicant.remotePreference ?? "",
-          noticePeriod: applicant.noticePeriod ?? "",
-          salaryExpectation: applicant.salaryExpectation ?? "",
-          savedCoverNote: applicant.savedCoverNote ?? "",
-          hasSavedCv: !!applicant.savedCvFileUrl,
-        }}
-        updateProfileAction={updateProfile}
+      <ProfileView
+        profile={profile}
+        audience="self"
+        actions={
+          <Link
+            href="/my/profile/edit"
+            className="text-sm font-medium rounded-md px-4 py-2 border border-zinc-300 text-zinc-700 hover:border-zinc-400"
+          >
+            Edit profile
+          </Link>
+        }
       />
     </div>
   );

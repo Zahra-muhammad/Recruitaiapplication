@@ -8,8 +8,14 @@ import { createSavedSearch } from "@/app/my/saved-searches/actions";
 import { toggleSavedJob } from "@/lib/savedJobActions";
 import { formatSalaryRange } from "@/lib/salary";
 import { parseRequirements, isShortSkill } from "@/lib/requirements";
+import { cityFromText, isRemoteLocation } from "@/lib/cities";
 
 export const dynamic = "force-dynamic";
+
+function jobCoords(location: string): { lat: number; lng: number } | null {
+  const city = cityFromText(location);
+  return city ? { lat: city.lat, lng: city.lng } : null;
+}
 
 export default async function PublicJobsPage() {
   await closeStaleJobs();
@@ -45,7 +51,13 @@ export default async function PublicJobsPage() {
     // Only named skills become filter chips — full requirement sentences
     // would swamp the sidebar.
     skills: parseRequirements(job.keySkills).filter(isShortSkill),
+    coords: jobCoords(job.location),
+    remote: isRemoteLocation(job.location),
   }));
+
+  const homeCity = sessionUser
+    ? (await prisma.applicant.findUnique({ where: { id: sessionUser.id }, select: { city: true } }))?.city ?? ""
+    : "";
 
   return (
     <div>
@@ -81,6 +93,7 @@ export default async function PublicJobsPage() {
             savedJobIds={savedJobIds}
             saveSearchAction={createSavedSearch}
             toggleSavedJobAction={toggleSavedJob}
+            homeCity={homeCity}
           />
         )}
       </div>

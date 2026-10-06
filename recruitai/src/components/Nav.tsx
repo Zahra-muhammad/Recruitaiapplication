@@ -43,6 +43,9 @@ export default async function Nav() {
             <Link href="/dashboard" className="text-zinc-600 hover:text-indigo-700 transition-colors">
               Dashboard
             </Link>
+            <Link href="/talent" className="text-zinc-600 hover:text-indigo-700 transition-colors">
+              Find talent
+            </Link>
             {session.user.role === "admin" && (
               <Link href="/team" className="text-zinc-600 hover:text-indigo-700 transition-colors">
                 Team

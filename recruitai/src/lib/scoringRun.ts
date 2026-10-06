@@ -79,10 +79,16 @@ export async function scoreCvForJob(cvText: string, job: ScorableJob): Promise<{
   return { result, inputHash };
 }
 
+// The stored result for this CV and job, without running the AI.
+export async function cachedScore(cvText: string, job: ScorableJob): Promise<ScoringResult | null> {
+  const rubric = await getJobRubric(job);
+  const row = await prisma.scoringCache.findUnique({ where: { inputHash: scoringInputHash(rubric, cvText) } });
+  return row ? (JSON.parse(row.result) as ScoringResult) : null;
+}
+
 // Whether the score is already stored (a "Check my fit" for it costs nothing).
 export async function isScoreCached(cvText: string, job: ScorableJob): Promise<boolean> {
-  const rubric = await getJobRubric(job);
-  return (await prisma.scoringCache.count({ where: { inputHash: scoringInputHash(rubric, cvText) } })) > 0;
+  return (await cachedScore(cvText, job)) !== null;
 }
 
 function userFacingError(err: unknown): string {

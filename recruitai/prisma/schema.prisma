@@ -86,6 +86,7 @@ enum NotificationType {
   STATUS_CHANGED
   NEW_MESSAGE
   JOB_ALERT
+  JOB_INVITE
 }
 
 enum MessageSender {
@@ -174,6 +175,7 @@ model Job {
   creator    User        @relation("JobCreatedBy", fields: [createdBy], references: [id])
   candidates Candidate[]
   savedBy    SavedJob[]
+  invites    JobInvite[]
 }
 
 model Candidate {
@@ -261,12 +263,72 @@ model Applicant {
   savedCvFileUrl    String?
   savedCvText       String?
   savedCoverNote    String?
+  // LinkedIn-style profile. `about` is the summary; experience and
+  // education live in their own tables.
+  about             String?
+  languages         String?
+  // Optional home city (key into src/lib/cities.ts) for "jobs near me" and
+  // distance filters. `location` keeps the human-readable label.
+  city              String?
+  // Opt-in: only applicants who switch this on appear in recruiter search.
+  openToWork        Boolean            @default(false)
+  profileUpdatedAt  DateTime?
   createdAt         DateTime           @default(now())
 
   applications  Candidate[]
   notifications Notification[]
   savedSearches SavedSearch[]
   savedJobs     SavedJob[]
+  experiences   ApplicantExperience[]
+  educations    ApplicantEducation[]
+  invites       JobInvite[]
+}
+
+model ApplicantExperience {
+  id          String  @id @default(cuid())
+  applicantId String
+  title       String
+  company     String
+  location    String?
+  // "YYYY-MM"; endDate null = current role.
+  startDate   String
+  endDate     String?
+  description String  @default("")
+  sortOrder   Int     @default(0)
+
+  applicant Applicant @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+
+  @@index([applicantId])
+}
+
+model ApplicantEducation {
+  id            String  @id @default(cuid())
+  applicantId   String
+  school        String
+  qualification String
+  field         String?
+  startYear     Int?
+  endYear       Int?
+  sortOrder     Int     @default(0)
+
+  applicant Applicant @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+
+  @@index([applicantId])
+}
+
+// A recruiter inviting an "open to work" candidate to apply for a job. The
+// recruiter only sees contact details once the candidate actually applies.
+model JobInvite {
+  id          String   @id @default(cuid())
+  jobId       String
+  applicantId String
+  invitedById String
+  createdAt   DateTime @default(now())
+
+  job       Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  applicant Applicant @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, applicantId])
 }
 
 model SavedJob {

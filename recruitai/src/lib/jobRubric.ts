@@ -136,5 +136,8 @@ export async function getJobRubric(job: RubricJob & Pick<Job, "id" | "scoringRub
     data: { scoringRubric: value },
   });
   const fresh = await prisma.job.findUnique({ where: { id: job.id }, select: { scoringRubric: true } });
-  return readStored(fresh?.scoringRubric ?? null, hash) ?? rubric;
+  // Remember it on the object too, so later calls with this same job
+  // (e.g. scoring several candidates in a loop) don't rebuild it.
+  job.scoringRubric = fresh?.scoringRubric ?? value;
+  return readStored(job.scoringRubric, hash) ?? rubric;
 }
