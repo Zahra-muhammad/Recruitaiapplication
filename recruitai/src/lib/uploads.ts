@@ -6,9 +6,9 @@
 // Keys are stored on Candidate.cvFileUrl / Applicant.savedCvFileUrl, e.g.
 // "<jobId>/<uuid>.pdf" or "applicants/<applicantId>/<uuid>.pdf".
 
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "fs/promises";
 import path from "path";
-import { get, put } from "@vercel/blob";
+import { del, get, put } from "@vercel/blob";
 
 const UPLOADS_ROOT = path.join(process.cwd(), "uploads");
 
@@ -59,5 +59,22 @@ export async function readUpload(key: string): Promise<Buffer | null> {
     return await readFile(full);
   } catch {
     return null;
+  }
+}
+
+// Deletes stored files; keys that don't exist are ignored.
+export async function deleteUploads(keys: string[]): Promise<void> {
+  const normalized = [...new Set(keys.map(normalizeStorageKey))];
+  if (normalized.length === 0) return;
+  if (blobStorageEnabled()) {
+    await del(normalized);
+    return;
+  }
+  for (const key of normalized) {
+    try {
+      await unlink(localPath(key));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
   }
 }

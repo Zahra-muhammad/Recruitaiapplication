@@ -12,7 +12,8 @@ import SalaryFields from "@/components/SalaryFields";
 import { formatSalaryRange } from "@/lib/salary";
 import ReverifyJobBanner from "@/components/ReverifyJobBanner";
 import { closeStaleJobs, needsReverification } from "@/lib/jobVerification";
-import { setJobStatus, setJobSalary, confirmJobStillOpen } from "../actions";
+import { setJobStatus, setJobSalary, confirmJobStillOpen, deleteJob } from "../actions";
+import DeleteJobButton from "@/components/DeleteJobButton";
 import { searchPipeline, rescoreJob } from "./actions";
 import FunnelAuditPanel from "@/components/FunnelAuditPanel";
 import { auditFunnel } from "@/lib/funnelAudit";
@@ -117,6 +118,13 @@ export default async function JobDetailPage({
                 {nextStatus === "CLOSED" ? "Close posting" : "Reopen posting"}
               </button>
             </form>
+            {(session.user.role === "admin" || job.createdBy === session.user.id) && (
+              <DeleteJobButton
+                jobTitle={job.title}
+                candidateCount={candidates.length}
+                deleteAction={deleteJob.bind(null, job.id)}
+              />
+            )}
           </div>
         </div>
         <p className="text-sm text-zinc-500 mt-1">

@@ -10,6 +10,7 @@ import { parseSalaryFields } from "@/lib/salary";
 import { cvFormat, extractCvText, CvReadError } from "@/lib/cvIntake";
 import { extractJobDraft, type JobDraft } from "@/lib/jobImport";
 import { AiCallError } from "@/lib/ai/claude";
+import { deleteUploads } from "@/lib/uploads";
 import type { JobStatus, Seniority, Stage } from "@prisma/client";
 
 const STAGES: Stage[] = ["pre_product", "early_users", "scaling"];
@@ -101,6 +102,41 @@ export async function createJob(formData: FormData) {
   revalidatePath("/dashboard");
   revalidatePath("/jobs");
   redirect(`/dashboard/${job.id}`);
+}
+
+// Permanently deletes a job with all its candidates, scores, messages and
+// the CV files uploaded for it. Applicants' own profile CVs are kept —
+// they're reused for applications to other jobs. Admins, or the person
+// who posted the job, only.
+export async function deleteJob(jobId: string) {
+  const session = await auth();
+  if (!session?.user) throw new Error("Not authenticated");
+
+  const job = await prisma.job.findFirst({
+    where: { id: jobId, companyId: session.user.companyId },
+    include: { candidates: { select: { cvFileUrl: true } } },
+  });
+  if (!job) throw new Error("Job not found");
+  if (session.user.role !== "admin" && job.createdBy !== session.user.id) {
+    throw new Error("Only an admin or the person who posted this job can delete it.");
+  }
+
+  const jobFiles = job.candidates
+    .map((c) => c.cvFileUrl.replace(/\\/g, "/"))
+    .filter((key) => key.startsWith(`${jobId}/`));
+
+  await prisma.job.delete({ where: { id: jobId } });
+
+  try {
+    await deleteUploads(jobFiles);
+  } catch (err) {
+    // The job is already gone; a leftover file is logged, not shown.
+    console.error(`[job-delete] ${jobId}: could not delete ${jobFiles.length} CV file(s)`, err);
+  }
+
+  revalidatePath("/dashboard");
+  revalidatePath("/jobs");
+  redirect("/dashboard");
 }
 
 export async function setJobStatus(jobId: string, formData: FormData) {
