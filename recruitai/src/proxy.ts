@@ -28,13 +28,13 @@ export default auth(async (req) => {
   // never the recruiter session, so the two account types stay fully
   // separate even at the middleware layer.
   if (pathname === APPLICANT_PREFIX || pathname.startsWith(`${APPLICANT_PREFIX}/`)) {
-    const secureCookie = req.nextUrl.protocol === "https:";
-    const cookieName = `${secureCookie ? "__Secure-" : ""}${APPLICANT_COOKIE_BASE}`;
+    // applicantAuth.config.ts sets this exact cookie name (no "__Secure-"
+    // prefix, even over HTTPS), so it must be read back under the same name.
     const applicantToken = await getToken({
       req,
       secret: process.env.AUTH_SECRET,
-      cookieName,
-      secureCookie,
+      cookieName: APPLICANT_COOKIE_BASE,
+      secureCookie: req.nextUrl.protocol === "https:",
     });
 
     if (!applicantToken) {

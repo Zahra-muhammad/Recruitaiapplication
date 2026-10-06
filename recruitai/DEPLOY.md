@@ -16,7 +16,11 @@ you in the browser. About 20–30 minutes.
 
 1. Sign up at <https://vercel.com> using **Continue with GitHub**.
 2. **Add New → Project**, pick the `recruitai` repository.
-3. Framework is detected as **Next.js**. Don't deploy yet if it offers —
+3. **Root Directory → Edit → choose `recruitai`.** The app lives in that
+   subfolder of the repo; without this the build fails ("No Next.js version
+   detected"). Leave Build Command and Install Command on their defaults —
+   the `vercel-build` script in `package.json` is picked up automatically.
+4. Framework is detected as **Next.js**. Don't deploy yet if it offers —
    add storage and settings first (if it already deployed and failed, that's
    expected; continue below and redeploy at the end).
 

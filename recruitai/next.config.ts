@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   // package directory at runtime. If Turbopack/webpack bundles it, that
   // relative path breaks ("Cannot find module .../pdf.worker.mjs"). Keeping
   // it external makes Node load it normally from node_modules instead.
-  serverExternalPackages: ["pdf-parse", "pdfjs-dist"],
+  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "@napi-rs/canvas"],
   experimental: {
     serverActions: {
       // Applications post the CV through a Server Action (default cap 1MB).

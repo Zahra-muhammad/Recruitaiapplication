@@ -1,4 +1,6 @@
 import { randomUUID } from "crypto";
+// Must load before PDFParse so the pdf.js worker resolves on Vercel serverless.
+import "pdf-parse/worker";
 import { PDFParse } from "pdf-parse";
 import { saveUpload } from "@/lib/uploads";
 import type { Evaluation } from "@/lib/scoring";
