@@ -13,7 +13,7 @@ import { formatSalaryRange } from "@/lib/salary";
 import ReverifyJobBanner from "@/components/ReverifyJobBanner";
 import { closeStaleJobs, needsReverification } from "@/lib/jobVerification";
 import { setJobStatus, setJobSalary, confirmJobStillOpen } from "../actions";
-import { searchPipeline } from "./actions";
+import { searchPipeline, rescoreJob } from "./actions";
 import FunnelAuditPanel from "@/components/FunnelAuditPanel";
 import { auditFunnel } from "@/lib/funnelAudit";
 import { describeDuplicates } from "@/lib/duplicateLabel";
@@ -198,9 +198,20 @@ export default async function JobDetailPage({
       )}
 
       <div>
-        <h2 className="text-sm font-medium text-zinc-900 mb-3">
-          Ranked candidates
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium text-zinc-900">Ranked candidates</h2>
+          {candidates.length > 0 && (
+            <form action={rescoreJob.bind(null, job.id)}>
+              <button
+                type="submit"
+                title="Re-run AI scoring for every candidate on this job (about 5-10 cents each)."
+                className="text-xs font-medium text-indigo-700 hover:underline"
+              >
+                Rescore all
+              </button>
+            </form>
+          )}
+        </div>
         <CandidatesTable
           candidates={rows}
           jobId={job.id}

@@ -20,7 +20,7 @@ export type Verdict = "COMPATIBLE" | "BORDERLINE" | "NOT_COMPATIBLE";
 
 // Bump when prompts or arithmetic change: stored results with an older
 // version are not reused, so rescoring picks up the change.
-export const SCORING_VERSION = "ai-1";
+export const SCORING_VERSION = "ai-2";
 
 export const RUBRIC_WEIGHTS = { mustHaves: 50, experience: 25, niceToHaves: 15, other: 10 } as const;
 export const COMPATIBLE_THRESHOLD = 75;
@@ -65,10 +65,13 @@ export type Assessment = z.infer<typeof AssessmentSchema>;
 const ASSESS_SYSTEM = `You are a fair, evidence-based technical recruiter. You assess how well one candidate's experience meets a job's requirements. You do not give a numeric score — your judgements are converted to a score by fixed rules.
 
 How to judge each requirement:
-- Match by meaning, not exact words. Versions, abbreviations and synonyms count: "ReactJS"/"React 18" = React, "TS" = TypeScript, "RTL"/"Jest"/"Cypress" = automated UI testing, "WCAG"/"screen-reader testing" = accessibility.
+- Match by meaning, not exact words. Versions, abbreviations and synonyms count: "ReactJS"/"React 18" = React, "TS" = TypeScript, "React Testing Library"/"Jest"/"Cypress" = automated UI testing, "WCAG"/"screen-reader testing" = accessibility.
 - level: "met" = clearly demonstrated at the depth the requirement asks for; "partial" = real but limited evidence (short duration, junior scope, or a closely related skill); "missing" = no credible evidence.
 - evidenceType: "work_experience" only when a role's description shows them doing it in that job; "project" for personal/side/open-source projects; "education" for coursework or degree projects; "skills_list_only" when it appears only in a skills list or summary with no role showing it used; "none" when absent. A skill that is only listed is never "met".
 - Requirements that ask for depth ("expert", "strong", "senior") need sustained, substantial work evidence to be "met".
+- A requirement that names several things (e.g. "SQL, Excel and dashboards") is judged as a whole: "met" if its core is clearly shown and the rest is shown or plainly implied, "partial" if only some of it is shown.
+- Spoken-language requirements are met by the CV's languages section or by working in that language.
+- Routine tools and practices of the profession that CVs rarely spell out (version control for software engineers, spreadsheets for analysts, standard team processes) count as "met" with work_experience evidence when the roles clearly involve the work they're used for — don't require them to be named.
 - Judge every requirement in both lists, using the numbers given.
 
 Roles: give every non-break role a relevance: "direct" = the same kind of work as this job; "adjacent" = related work where much of the skill transfers; "unrelated" = little transfer.
@@ -149,6 +152,12 @@ const RATING = { strong: 100, some: 60, none: 0 } as const;
 // A requirement counts as demonstrated at this much credit (e.g. partial
 // evidence from real work).
 const DEMONSTRATED = 0.5;
+// Score ceilings: a missing must-have rules out the top tier; an
+// overqualified candidate lands mid-Borderline for a human to review; a
+// keyword-stuffed CV stays clearly Not compatible.
+const TOP_TIER_CAP = 84;
+const OVERQUALIFIED_CAP = 60;
+const KEYWORD_STUFFING_CAP = 35;
 
 export interface RequirementResult {
   requirement: string;
@@ -194,7 +203,9 @@ export interface ScoringResult {
 function judge(list: string[], judgements: Assessment["mustHaves"]): RequirementResult[] {
   return list.map((requirement, i) => {
     const j = judgements.find((x) => x.index === i)!;
-    const credit = j.level === "missing" ? 0 : LEVEL_CREDIT[j.level] * EVIDENCE_CREDIT[j.evidenceType];
+    // The weaker of "how well" and "where from" — not their product, so
+    // partial evidence from a project isn't penalised twice.
+    const credit = j.level === "missing" ? 0 : Math.min(LEVEL_CREDIT[j.level], EVIDENCE_CREDIT[j.evidenceType]);
     return {
       requirement,
       level: j.level,
@@ -240,25 +251,28 @@ export function computeScore(
       100
   );
 
-  // Caps keep a candidate out of a verdict band no matter how strong the
-  // rest of the CV is.
+  // Each missing must-have already costs its share of the 50%. Caps only
+  // stop a candidate reaching a band their gaps rule out.
   const caps: { max: number; reason: string }[] = [];
   const missing = mustHaves.filter((r) => !r.demonstrated);
-  if (missing.length > 0 && missing.length >= Math.ceil(mustHaves.length / 2)) {
-    caps.push({ max: BORDERLINE_THRESHOLD - 1, reason: `Half or more of the must-haves aren't demonstrated (${missing.length} of ${mustHaves.length}).` });
+  if (mustHavePct < 50) {
+    caps.push({ max: BORDERLINE_THRESHOLD - 1, reason: `Most must-haves aren't demonstrated (${missing.length} of ${mustHaves.length} missing).` });
   } else if (missing.length > 0) {
-    caps.push({ max: COMPATIBLE_THRESHOLD - 1, reason: `Missing must-have${missing.length > 1 ? "s" : ""}: ${missing.map((r) => r.requirement).join("; ")}.` });
+    caps.push({ max: TOP_TIER_CAP, reason: `Missing must-have${missing.length > 1 ? "s" : ""}: ${missing.map((r) => r.requirement).join("; ")}.` });
   }
   if (rubric.requiredYears > 0 && relevantYears < rubric.requiredYears / 2) {
     caps.push({ max: COMPATIBLE_THRESHOLD - 1, reason: `${relevantYears} years of relevant experience, well below the ${rubric.requiredYears} required.` });
   }
   const overqualified = assessment.seniorityFit === "above";
   if (overqualified) {
-    caps.push({ max: COMPATIBLE_THRESHOLD - 1, reason: `Overqualified for this role — flagged for review instead of ranked at the top. ${assessment.seniorityReason}` });
+    caps.push({ max: OVERQUALIFIED_CAP, reason: `Overqualified for this role — flagged for review instead of ranked at the top. ${assessment.seniorityReason}` });
   }
 
   const listOnly = mustHaves.filter((r) => r.evidenceType === "skills_list_only").length;
   const keywordStuffing = assessment.keywordStuffing || (mustHaves.length > 0 && listOnly / mustHaves.length >= 0.5);
+  if (keywordStuffing) {
+    caps.push({ max: KEYWORD_STUFFING_CAP, reason: "Skills are listed without work showing them used." });
+  }
 
   const totalScore = Math.max(0, Math.min(100, Math.min(rawScore, ...caps.map((c) => c.max))));
   const profileWithoutContact: Partial<CvProfile> = { ...profile };

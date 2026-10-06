@@ -1,12 +1,14 @@
 // End-to-end scoring test: reads the 8 test CVs (real PDF and Word files)
 // through the app's own file reader, builds the job rubric, scores every
-// CV with the live AI pipeline and checks the verdicts against
-// scoring-fixtures/expected.json. The scorer never sees expected.json.
+// CV with the live AI pipeline and checks each score against the target
+// range (and flag) in scoring-fixtures/expected.json. The scorer never
+// sees expected.json.
 //
 //   npm run test:scoring              full run (needs ANTHROPIC_API_KEY; ~16 AI calls + 1 for the rubric)
 //   npm run test:scoring -- --offline file reading + score arithmetic only, no API calls
 //
-// Exits with code 1 if any CV can't be read or any verdict doesn't match.
+// PASS = inside the target range; NEAR = within 5 points of it; FAIL = further out.
+// Exits with code 1 on any FAIL, missing flag, or unreadable CV.
 
 import { readFileSync, readdirSync } from "fs";
 import type { Job } from "@prisma/client";
@@ -20,8 +22,9 @@ const offline = process.argv.includes("--offline");
 
 interface Expected {
   name: string;
-  expect: string[];
-  why?: string;
+  min: number;
+  max: number;
+  flag?: "overqualified" | "keywordStuffing";
 }
 
 function assert(cond: unknown, msg: string) {
@@ -64,16 +67,24 @@ function offlineChecks() {
   assert(listed.verdict === "NOT_COMPATIBLE" && listed.keywordStuffing, "skills only in a list → not compatible + flagged");
 
   const oneMissing = computeScore(profile, rubric, { ...base, mustHaves: [...base.mustHaves.slice(0, 3), j(3, "missing", "none")] }, today);
-  assert(oneMissing.totalScore <= 74, "a missing must-have caps the score below Compatible");
+  assert(strong.totalScore - oneMissing.totalScore >= 10 && oneMissing.totalScore <= 84, "a missing must-have costs its share and rules out the top tier");
+
+  const partialProject = computeScore(profile, rubric, { ...base, mustHaves: [...base.mustHaves.slice(0, 3), j(3, "partial", "project")] }, today);
+  assert(partialProject.details.mustHaves[3].credit === 0.5, "partial evidence from a project isn't penalised twice");
+
+  const mostMissing = computeScore(profile, rubric, { ...base, mustHaves: [j(0, "met", "work_experience"), j(1, "missing", "none"), j(2, "missing", "none"), j(3, "missing", "none")] }, today);
+  assert(mostMissing.verdict === "NOT_COMPATIBLE", "most must-haves missing → not compatible");
 
   const over = computeScore(profile, rubric, { ...base, seniorityFit: "above" }, today);
-  assert(over.overqualified && over.totalScore <= 74, "overqualified is flagged and not ranked as Compatible");
-  console.log("Offline checks passed: date maths, evidence weighting, must-have caps, overqualification.\n");
+  assert(over.overqualified && over.totalScore <= 60, "overqualified is flagged and lands mid-Borderline");
+  console.log("Offline checks passed: date maths, evidence weighting, must-have caps, overqualification, keyword stuffing.\n");
 }
 
-function passes(result: ScoringResult, expected: Expected): boolean {
-  if (expected.expect.includes(result.verdict)) return true;
-  return expected.expect.includes("FLAGGED") && (result.overqualified || result.keywordStuffing);
+function grade(result: ScoringResult, expected: Expected): "PASS" | "NEAR" | "FAIL" {
+  if (expected.flag && !result[expected.flag]) return "FAIL";
+  const s = result.totalScore;
+  if (s >= expected.min && s <= expected.max) return "PASS";
+  return s >= expected.min - 5 && s <= expected.max + 5 ? "NEAR" : "FAIL";
 }
 
 async function main() {
@@ -119,10 +130,11 @@ async function main() {
 
   // 4. Report.
   let failures = 0;
+  let near = 0;
   const rows = cvs
     .map(({ stem }) => ({ stem, r: results.get(stem)! }))
     .sort((a, b) => (b.r instanceof Error ? -1 : b.r.totalScore) - (a.r instanceof Error ? -1 : a.r.totalScore));
-  console.log("Name (read from CV)    Score  Verdict         Flags                 Expected                  Result");
+  console.log("Name (read from CV)    Score  Verdict         Flags                 Target          Result");
   for (const { stem, r } of rows) {
     const exp = expected[stem];
     if (r instanceof Error) {
@@ -130,11 +142,13 @@ async function main() {
       console.log(`${exp.name.padEnd(22)} ERROR  ${r.message}`);
       continue;
     }
-    const ok = passes(r, exp);
-    if (!ok) failures++;
+    const result = grade(r, exp);
+    if (result === "FAIL") failures++;
+    if (result === "NEAR") near++;
+    const target = `${exp.min}-${exp.max}${exp.flag ? " + flag" : ""}`;
     const flags = [r.overqualified && "overqualified", r.keywordStuffing && "keyword-stuffing"].filter(Boolean).join(",") || "-";
     console.log(
-      `${(r.contact.fullName ?? "(none)").padEnd(22)} ${String(r.totalScore).padStart(5)}  ${r.verdict.padEnd(15)} ${flags.padEnd(21)} ${exp.expect.join(" or ").padEnd(25)} ${ok ? "PASS" : "FAIL"}`
+      `${(r.contact.fullName ?? "(none)").padEnd(22)} ${String(r.totalScore).padStart(5)}  ${r.verdict.padEnd(15)} ${flags.padEnd(21)} ${target.padEnd(15)} ${result}`
     );
   }
 
@@ -150,7 +164,7 @@ async function main() {
     console.log(`  Summary: ${r.summary}`);
   }
 
-  console.log(`\n${cvs.length - failures}/${cvs.length} passed.`);
+  console.log(`\n${cvs.length - failures - near} in range, ${near} within 5 points, ${failures} failed (of ${cvs.length}).`);
   if (failures) process.exitCode = 1;
 }
 

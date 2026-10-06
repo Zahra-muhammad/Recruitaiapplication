@@ -10,7 +10,7 @@ import type { Job, Seniority } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { callStructured, SCORING_MODEL } from "@/lib/ai/claude";
 
-const RUBRIC_VERSION = "1";
+const RUBRIC_VERSION = "2";
 
 const RubricSchema = z.object({
   mustHaves: z.array(z.string()).describe("Required capabilities, one concrete item each."),
@@ -43,10 +43,11 @@ const SENIORITY_DEFAULT_YEARS: Record<Seniority, number> = {
 const SYSTEM = `You turn a job posting into a hiring rubric. Another step will score CVs against it, so every item must be something a CV can show evidence for.
 
 Rules:
-- mustHaves: the capabilities the posting states or clearly implies are required. Use the posting's own requirement list when it has one; if it doesn't, derive the 3-8 core requirements from the title, description and key skills. One concrete, assessable capability per item (split "React and TypeScript" into two). Keep the employer's wording where possible.
-- niceToHaves: items the posting marks as preferred, bonus, "nice to have" or "a plus". Empty if none.
+- mustHaves: when the posting has a requirements list ("Must have", "Requirements", "What you need"…), use exactly its items, one per bullet, keeping the employer's wording. Do NOT split a bullet into several items — a bullet like "SQL, Excel and building dashboards" stays one requirement. Only if the posting has no requirements list, derive the 3-8 core requirements from the title, description and key skills.
+- Responsibilities ("What you'll do", first projects) and company/product context are not requirements — don't turn them into must-haves.
+- niceToHaves: items the posting marks as preferred, bonus, "nice to have" or "a plus", one per bullet. Empty if none.
 - Do NOT put years of experience in either list — return them in minYearsExperience instead (null if the posting gives no number).
-- Never include anything about age, gender, nationality, ethnicity, religion, marital or family status, photos, or other protected characteristics, even if the posting mentions them. Location or work-authorisation requirements are also excluded.
+- Never include anything about age, gender, nationality, ethnicity, religion, marital or family status, photos, or other protected characteristics, even if the posting mentions them. Location, relocation or work-authorisation items are also excluded, from both lists.
 - Do not invent requirements the posting doesn't support.`;
 
 export function jobRubricHash(job: RubricJob): string {
