@@ -504,50 +504,49 @@ export function detectGenericApplication(
 }
 
 // ---------------------------------------------------------------------------
-// Applicant-facing skill match — deliberately separate from scoreCv:
-// returns only matched/missing skill labels (original casing, as posted),
-// never a score or verdict, since applicants should never see those.
+// Applicant-facing "Check my fit". Built from the exact same AI score the
+// recruiter sees, but shows only requirements and tips — never the score
+// or verdict. "Qualified" means the recruiter would see Borderline or
+// better, so both sides always agree.
 // ---------------------------------------------------------------------------
 
-export interface SkillMatchResult {
+export interface QualificationResult {
   matched: string[];
   missing: string[];
-}
-
-export function matchSkillsForApplicant(cvText: string, job: Job): SkillMatchResult {
-  return matchRequirements(cvText, job.keySkills);
-}
-
-// The applicant-facing "am I qualified enough to apply" gate. Deliberately
-// built from skill matching only (never the internal weighted score/verdict
-// scoreCv produces) — a candidate is "qualified" once they match at
-// least half of the role's listed key skills. Below that, they get their
-// missing skills plus generic CV tips instead of an Apply button.
-const QUALIFY_THRESHOLD = 0.5;
-
-export interface QualificationResult extends SkillMatchResult {
   qualified: boolean;
   tips: string[];
+  // Set instead of a result when the check couldn't run.
+  error?: string;
 }
 
-export function evaluateApplicantQualification(cvText: string, job: Job): QualificationResult {
-  const { matched, missing } = matchSkillsForApplicant(cvText, job);
-  const total = matched.length + missing.length;
-  const qualified = total === 0 || matched.length / total >= QUALIFY_THRESHOLD;
+export function applicantFit(result: ScoringResult): QualificationResult {
+  const d = result.details;
+  const matched = d.mustHaves.filter((r) => r.demonstrated).map((r) => r.requirement);
+  const missing = d.mustHaves.filter((r) => !r.demonstrated).map((r) => r.requirement);
+  const qualified = result.totalScore >= BORDERLINE_THRESHOLD;
 
   const tips: string[] = [];
-  if (!qualified) {
-    if (missing.length > 0) {
-      tips.push(
-        `Add these to your CV if you have relevant experience with them: ${missing.join(", ")}.`
-      );
+  for (const r of d.mustHaves.filter((m) => !m.demonstrated || m.credit < 1)) {
+    if (r.evidenceType === "skills_list_only") {
+      tips.push(`Your CV lists "${r.requirement}" but no role shows you using it — add a bullet under the job where you did that work.`);
+    } else if (r.level === "missing") {
+      tips.push(`If you have experience with "${r.requirement}", describe where and how you used it in your work history.`);
+    } else if (r.level === "partial") {
+      tips.push(`Show more depth for "${r.requirement}" — what you built with it, for how long, and the result.`);
     }
+  }
+  const { relevantYears, requiredYears } = d.experience;
+  if (requiredYears > 0 && relevantYears < requiredYears) {
     tips.push(
-      "Use the same wording as the job posting for your skills and tools — exact keyword matches are easier to find."
+      `This role asks for ${requiredYears}+ years of relevant experience; your CV shows about ${relevantYears}. Make sure every relevant role has clear start and end dates.`
     );
-    tips.push("List specific tools and technologies you've used rather than broad categories.");
-    tips.push("Quantify your experience where you can (years used, project outcomes, scale).");
+  }
+  if (d.experience.undatedRoles > 0) {
+    tips.push("Some roles on your CV have no dates, so they couldn't be counted — add month and year for each.");
+  }
+  if (tips.length === 0 && !qualified) {
+    tips.push("Describe concrete results in each role (what you built or changed, and the outcome) so your experience is easy to match.");
   }
 
-  return { matched, missing, qualified, tips };
+  return { matched, missing, qualified, tips: tips.slice(0, 5) };
 }

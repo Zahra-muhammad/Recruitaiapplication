@@ -9,7 +9,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { SCORING_MODEL, AiCallError } from "@/lib/ai/claude";
 import { getJobRubric } from "@/lib/jobRubric";
-import { detectGenericApplication, scoreCv, SCORING_VERSION, type ScoringDetails, type ScoringResult } from "@/lib/scoring";
+import { detectGenericApplication, scoreCv, SCORING_VERSION, type ScoringResult } from "@/lib/scoring";
 
 // A PENDING candidate older than this was cut off mid-scoring (e.g. the
 // serverless function timed out) and is shown as failed with a retry.
@@ -50,11 +50,40 @@ function evaluationData(result: ScoringResult, inputHash: string) {
   } satisfies Prisma.EvaluationUncheckedUpdateInput;
 }
 
-const REUSED_FIELDS = {
-  totalScore: true, verdict: true, mustHaveScore: true, experienceScore: true, niceToHaveScore: true,
-  otherScore: true, overqualified: true, keywordStuffing: true, summary: true, strengths: true,
-  concerns: true, details: true,
-} as const;
+type ScorableJob = Parameters<typeof getJobRubric>[0];
+
+function scoringInputHash(rubric: unknown, cvText: string): string {
+  return createHash("sha256").update(JSON.stringify([SCORING_VERSION, SCORING_MODEL, rubric, cvText])).digest("hex");
+}
+
+// The single scoring entry point for a CV against a job, shared by the
+// recruiter pipeline and the applicant "Check my fit". Identical CV text +
+// identical rubric → the stored result, so both sides always agree and
+// the model isn't asked twice.
+export async function scoreCvForJob(cvText: string, job: ScorableJob): Promise<{ result: ScoringResult; inputHash: string }> {
+  const rubric = await getJobRubric(job);
+  const inputHash = scoringInputHash(rubric, cvText);
+
+  const cached = await prisma.scoringCache.findUnique({ where: { inputHash } });
+  if (cached) {
+    console.info("[score] reusing stored result for identical input");
+    return { result: JSON.parse(cached.result) as ScoringResult, inputHash };
+  }
+
+  const result = await scoreCv(cvText, rubric);
+  await prisma.scoringCache.upsert({
+    where: { inputHash },
+    update: {},
+    create: { inputHash, result: JSON.stringify(result) },
+  });
+  return { result, inputHash };
+}
+
+// Whether the score is already stored (a "Check my fit" for it costs nothing).
+export async function isScoreCached(cvText: string, job: ScorableJob): Promise<boolean> {
+  const rubric = await getJobRubric(job);
+  return (await prisma.scoringCache.count({ where: { inputHash: scoringInputHash(rubric, cvText) } })) > 0;
+}
 
 function userFacingError(err: unknown): string {
   if (err instanceof AiCallError) return err.message;
@@ -75,33 +104,11 @@ export async function runScoring(candidateId: string): Promise<void> {
   });
 
   try {
-    const rubric = await getJobRubric(candidate.job);
-    const inputHash = createHash("sha256")
-      .update(JSON.stringify([SCORING_VERSION, SCORING_MODEL, rubric, candidate.extractedText]))
-      .digest("hex");
-
-    // Identical CV text + identical rubric → identical result, without
-    // asking the model again.
-    const previous = await prisma.evaluation.findFirst({
-      where: { inputHash, scoringVersion: SCORING_VERSION, candidate: { job: { companyId: candidate.job.companyId } } },
-      select: REUSED_FIELDS,
-    });
-
-    let data: ReturnType<typeof evaluationData>;
-    let cvName: string | null;
-    let cvEmail: string | null = null;
-    let cvPhone: string | null = null;
-    if (previous) {
-      console.info(`[score] reusing stored result for identical input (candidate ${candidateId})`);
-      data = { ...previous, potential: "[]", inputHash, scoringVersion: SCORING_VERSION, evaluatedAt: new Date() };
-      cvName = (JSON.parse(previous.details) as ScoringDetails).profile.fullName;
-    } else {
-      const result = await scoreCv(candidate.extractedText, rubric);
-      data = evaluationData(result, inputHash);
-      cvName = result.contact.fullName;
-      cvEmail = result.contact.email;
-      cvPhone = result.contact.phone;
-    }
+    const { result, inputHash } = await scoreCvForJob(candidate.extractedText, candidate.job);
+    const data = evaluationData(result, inputHash);
+    const cvName = result.contact.fullName;
+    const cvEmail = result.contact.email;
+    const cvPhone = result.contact.phone;
 
     const generic = detectGenericApplication(candidate.extractedText, candidate.job, candidate.coverNote);
     const scored = { ...data, genericFlag: generic.flagged, genericReasons: JSON.stringify(generic.reasons) };

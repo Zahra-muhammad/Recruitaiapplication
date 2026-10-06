@@ -8,6 +8,7 @@ export interface QualificationResult {
   missing: string[];
   qualified: boolean;
   tips: string[];
+  error?: string;
 }
 
 // Matches serverActions.bodySizeLimit in next.config.ts (the CV is posted
@@ -52,7 +53,9 @@ export default function ApplyGate({
     setUseSavedCv(true);
     startQuickApplying(async () => {
       try {
-        setResult(await quickApplyAction(jobId));
+        const res = await quickApplyAction(jobId);
+        if (res.error) setCheckError(res.error);
+        else setResult(res);
       } catch (err) {
         setCheckError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       }
@@ -100,7 +103,8 @@ export default function ApplyGate({
     startChecking(async () => {
       try {
         const res = await checkFitAction(jobId, buildCvFormData());
-        setResult(res);
+        if (res.error) setCheckError(res.error);
+        else setResult(res);
       } catch (err) {
         setCheckError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
       }
@@ -163,7 +167,7 @@ export default function ApplyGate({
             disabled={quickApplying || checking}
             className="shrink-0 bg-white text-blue-700 text-sm font-semibold rounded-md px-4 py-2 hover:bg-blue-50 transition-colors disabled:opacity-60"
           >
-            {quickApplying ? "Applying…" : "⚡ Apply with my profile"}
+            {quickApplying ? "Checking & applying…" : "⚡ Apply with my profile"}
           </button>
         </div>
       )}
@@ -213,7 +217,7 @@ export default function ApplyGate({
             disabled={checking || (!file && !useSavedCv)}
             className="bg-blue-600 text-white text-sm font-medium rounded-md px-5 py-2 hover:bg-blue-700 transition-colors disabled:opacity-50"
           >
-            {checking ? "Checking…" : "Check my fit"}
+            {checking ? "Checking your CV… (up to a minute)" : "Check my fit"}
           </button>
         </div>
       )}

@@ -367,3 +367,22 @@ model Evaluation {
 
   @@index([inputHash])
 }
+
+// AI scoring results keyed by a hash of (scorer version, model, job rubric,
+// CV text). The applicant "Check my fit" and the recruiter score share it,
+// so the same CV for the same job always gets the same result.
+model ScoringCache {
+  inputHash String   @id
+  result    String
+  createdAt DateTime @default(now())
+}
+
+// One row per AI-backed "Check my fit" run, used to rate-limit the public
+// job pages. Stores a salted hash of the visitor's IP, never the IP.
+model FitCheckLog {
+  id        String   @id @default(cuid())
+  ipHash    String
+  createdAt DateTime @default(now())
+
+  @@index([ipHash, createdAt])
+}

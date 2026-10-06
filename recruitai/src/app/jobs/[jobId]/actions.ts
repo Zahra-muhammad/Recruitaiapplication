@@ -3,9 +3,10 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { applicantAuth } from "@/applicantAuth";
-import { evaluateApplicantQualification, type QualificationResult } from "@/lib/scoring";
-import { isCvFile, storeAndParseCv, parseCvText } from "@/lib/cvIntake";
-import { scoreInBackground } from "@/lib/scoringRun";
+import { applicantFit, type QualificationResult } from "@/lib/scoring";
+import { takeFitCheck } from "@/lib/fitCheckLimit";
+import { isCvFile, storeAndParseCv, parseCvText, CvReadError } from "@/lib/cvIntake";
+import { scoreInBackground, scoreCvForJob, isScoreCached } from "@/lib/scoringRun";
 import { notifyCompany } from "@/lib/notifications";
 import { queueEmail, appUrl } from "@/lib/email";
 import { newStatusToken } from "@/lib/statusToken";
@@ -164,23 +165,50 @@ export async function applyToJob(jobId: string, formData: FormData) {
   redirect(`/jobs/${jobId}/applied?t=${statusToken}`);
 }
 
+// The fit check behind both "Check my fit" and one-click apply: the same AI
+// score the recruiter will see (stored, so applying afterwards reuses it).
+// If the AI can't run, the applicant is let through rather than blocked —
+// their CV is still scored for the recruiter after they apply.
+async function fitFor(cvText: string, job: OpenJob): Promise<QualificationResult> {
+  try {
+    if (!(await isScoreCached(cvText, job)) && !(await takeFitCheck())) {
+      return { matched: [], missing: [], qualified: false, tips: [], error: "You've checked several CVs in the last hour. Please try again a bit later." };
+    }
+    return applicantFit((await scoreCvForJob(cvText, job)).result);
+  } catch (err) {
+    console.error("[fit-check] failed", err);
+    return {
+      matched: [],
+      missing: [],
+      qualified: true,
+      tips: ["We couldn't run the automatic check right now — you can still apply, and the team will review your CV."],
+    };
+  }
+}
+
+const fail = (error: string): QualificationResult => ({ matched: [], missing: [], qualified: false, tips: [], error });
+
 // One-click apply for signed-in applicants with a saved profile + CV. Runs
-// the same skill-match gate as "Check my fit" — if they don't pass, nothing
-// is submitted and they get the same matched/missing feedback instead.
+// the same fit check as "Check my fit" — if they don't pass, nothing is
+// submitted and they get the same matched/missing feedback instead.
 export async function quickApplyWithProfile(jobId: string): Promise<QualificationResult> {
   const job = await findOpenJob(jobId);
 
   const applicantId = await getSignedInApplicantId();
-  if (!applicantId) throw new Error("Sign in to apply with your profile.");
+  if (!applicantId) return fail("Sign in to apply with your profile.");
   const applicant = await prisma.applicant.findUnique({ where: { id: applicantId } });
   if (!applicant?.savedCvFileUrl || !applicant.savedCvText) {
-    throw new Error("Add a CV to your profile first.");
+    return fail("Add a CV to your profile first.");
   }
 
-  await assertNotAlreadyApplied(jobId, applicant.email, applicantId);
+  try {
+    await assertNotAlreadyApplied(jobId, applicant.email, applicantId);
+  } catch (err) {
+    return fail((err as Error).message);
+  }
 
-  const fit = evaluateApplicantQualification(applicant.savedCvText, job);
-  if (!fit.qualified) return fit;
+  const fit = await fitFor(applicant.savedCvText, job);
+  if (fit.error || !fit.qualified) return fit;
 
   const statusToken = await createApplication(job, {
     name: applicant.name,
@@ -198,10 +226,10 @@ export async function quickApplyWithProfile(jobId: string): Promise<Qualificatio
 
 // Applicant self-check — parses the CV in memory only (or reuses a saved CV's
 // already-extracted text). No Candidate record is created and no file is
-// written to disk; only clicking "Submit application" actually applies.
-// Returns matched/missing skills and a qualified flag derived purely from
-// skill matching — never the internal weighted score/verdict, which stay
-// recruiter-only.
+// stored; only clicking "Submit application" actually applies. Returns
+// matched/missing requirements and tips — never the score or verdict, which
+// stay recruiter-only. Problems come back as `error` (thrown messages are
+// hidden in production).
 export async function checkFit(jobId: string, formData: FormData): Promise<QualificationResult> {
   const job = await findOpenJob(jobId);
 
@@ -210,20 +238,20 @@ export async function checkFit(jobId: string, formData: FormData): Promise<Quali
 
   if (useSavedCv) {
     const applicantId = await getSignedInApplicantId();
-    if (!applicantId) throw new Error("Sign in to use a saved CV.");
+    if (!applicantId) return fail("Sign in to use a saved CV.");
     const applicant = await prisma.applicant.findUnique({ where: { id: applicantId } });
-    if (!applicant?.savedCvText) throw new Error("No saved CV found — please upload one.");
+    if (!applicant?.savedCvText) return fail("No saved CV found — please upload one.");
     extractedText = applicant.savedCvText;
   } else {
     const cv = formData.get("cv");
-    if (!(cv instanceof File) || cv.size === 0) {
-      throw new Error("Please attach your CV as a PDF or Word file.");
+    if (!(cv instanceof File) || cv.size === 0) return fail("Please attach your CV as a PDF or Word file.");
+    if (!isCvFile(cv)) return fail("CV must be a PDF or Word (.docx) file.");
+    try {
+      extractedText = await parseCvText(cv);
+    } catch (err) {
+      return fail(err instanceof CvReadError ? err.message : "We couldn't read this file. Please try another copy of your CV.");
     }
-    if (!isCvFile(cv)) {
-      throw new Error("CV must be a PDF or Word (.docx) file.");
-    }
-    extractedText = await parseCvText(cv);
   }
 
-  return evaluateApplicantQualification(extractedText, job);
+  return fitFor(extractedText, job);
 }

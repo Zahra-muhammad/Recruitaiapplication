@@ -14,6 +14,9 @@ import { parseRequirements, isShortSkill } from "@/lib/requirements";
 import { publicJobWhere, verifiedActiveLabel } from "@/lib/jobVerification";
 import { applyToJob, checkFit, quickApplyWithProfile } from "./actions";
 
+// "Check my fit" runs the AI scorer, which can take up to a minute.
+export const maxDuration = 300;
+
 export default async function PublicJobDetailPage({
   params,
 }: {
